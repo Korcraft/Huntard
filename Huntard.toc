@@ -1,0 +1,25 @@
+## Interface: 16001
+## Interface-Camelot: 16001
+## Title: Huntard
+## Notes: Hunter toolkit -- experimental.
+## Author: Korcraft
+## Version: 0.3.0
+## SavedVariables: HuntardDB
+## X-License: MIT
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibRangeCheck-3.0\LibRangeCheck-3.0.lua
+
+Core.lua
+Range.lua
+WarningText.lua
+TargetFrameHighlight.lua
+AspectAlert.lua
+ViperAlert.lua
+SerpentSting.lua
+AlertIcon.lua
+PetHealth.lua
+AlertCluster.lua
+PetAbilities.lua
+AmmoAlert.lua

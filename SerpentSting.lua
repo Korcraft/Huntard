@@ -1,0 +1,184 @@
+-- Huntard: SerpentSting.lua
+-- Tracks Serpent Sting's remaining DEBUFF duration on your CURRENT
+-- TARGET, surfacing an alert only during the final 3 seconds before it
+-- falls off -- the classic "refresh your DoT now" pattern addons like
+-- TellMeWhen build as reactive icons, purpose-built here for this one DoT.
+--
+-- Does NOT alert when Serpent Sting is simply missing/never applied to
+-- the current target -- only when a tracked application is about to
+-- expire.
+--
+-- DOES NOT READ THE LIVE DEBUFF -- confirmed via /huntard debug, run live
+-- in combat, that this client marks auras secret during combat
+-- (C_Secrets.ShouldAurasBeSecret() == true), which blocks BOTH
+-- index-based enumeration and direct by-name aura lookups equally (see
+-- AspectAlert.lua's header for the full finding).
+--
+-- DOES NOT USE THE COMBAT LOG EITHER -- that was the original design
+-- (SPELL_AURA_APPLIED/REFRESH/REMOVED, keyed per target GUID), but
+-- registering for COMBAT_LOG_EVENT_UNFILTERED at all is blocked on this
+-- client for Huntard, confirmed via extensive live bisection:
+--   - A plain CreateFrame("Frame"):RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+--     triggers "Huntard has been blocked from an action only available to
+--     the Blizzard UI" -- reproducible even with a totally empty handler,
+--     so it's not about processing the data, just making that native call.
+--   - Routing it through AceEvent-3.0 (piggybacking on TellMeWhen's own
+--     already-loaded copy of that library, so the actual native
+--     RegisterEvent() call executes from TellMeWhen's file, not Huntard's)
+--     STILL triggered it -- ruled out live.
+--   - Grepped Details' own source for how it handles this exact client
+--     (named internally as "ForeverWow"/"ApocalypseWow", build range
+--     16001-19999, via DetailsFramework.IsForeverWow() in its bundled
+--     Libs/DF/fw.lua): Details ITSELF skips COMBAT_LOG_EVENT_UNFILTERED
+--     registration entirely on this client (functions/plater.lua,
+--     startup.lua) and instead falls back to Blizzard's own newer built-in
+--     DamageMeter API (Enum.DamageMeterType, see core/parser_nocleu.lua)
+--     for aggregate combat stats. Even THAT official replacement explicitly
+--     marks debuff-uptime tracking as "not supported" in its own mapping
+--     table. Conclusion: there is no mechanism, native or addon-side, for
+--     any addon to get real-time per-target debuff application data on
+--     this client. This is a hard platform ceiling, not a Huntard bug.
+--
+-- FALLBACK DESIGN: tracks your own successful Serpent Sting cast via
+-- UNIT_SPELLCAST_SUCCEEDED (same always-visible, never-secret event type
+-- AspectAlert.lua uses for aspects) against your current target at the
+-- moment of casting, keyed by that target's GUID, then just counts down a
+-- fixed SERPENT_STING_DURATION from there. This does NOT know about the
+-- debuff being dispelled, resisted, or overwritten early by another
+-- hunter -- there's no way to know that on this client -- so a countdown
+-- can occasionally run past when the real debuff actually fell off. For
+-- the stated use case (tracking your own application while multi-dotting
+-- and switching targets) that's a rare edge case, not the common path.
+--
+-- Tracked per TARGET GUID rather than "your last cast" specifically
+-- because you multi-dot: Serpent Sting can be ticking on several targets
+-- at once, and this needs to report correctly on whichever one you're
+-- CURRENTLY looking at, not just the most recent one you cast it on.
+
+local H = Huntard
+H.SerpentSting = H.SerpentSting or {}
+
+local SERPENT_STING_NAME = "Serpent Sting"
+local SERPENT_STING_DURATION = 15 -- seconds -- confirmed real value, not guessed
+-- UNIT_SPELLCAST_SUCCEEDED fires when the CAST completes, not when the shot
+-- actually lands -- Serpent Sting is a ranged shot with real flight time to
+-- the target, so the debuff doesn't actually apply until slightly after
+-- this event fires. Confirmed live: without this buffer, the tracked
+-- countdown reached zero (and the real debuff actually fell off) about
+-- 0.5-1s AFTER our calculated expiry -- i.e. our timer was running early.
+-- Padding the effective duration compensates. This is an approximation --
+-- real flight time scales with distance to target -- not an exact fix, but
+-- splits the reported 0.5-1s gap.
+local TRAVEL_TIME_BUFFER = 0.75
+local ALERT_WINDOW = 3 -- seconds -- only shown once this close to falling off
+H.SerpentSting.ALERT_WINDOW = ALERT_WINDOW
+
+-- [targetGUID] = GetTime() when you last successfully cast Serpent Sting
+-- while that GUID was your target.
+local appliedAt = {}
+local serpentStingIcon
+local serpentStingSpellId
+
+-- GetSpellInfo -- NOT an aura read, confirmed unaffected by the secrecy
+-- restriction (Arcane Shot's own declared range read correctly in the
+-- same in-combat debug run that proved aura reads were blocked) -- used
+-- once to fetch Serpent Sting's icon for display and to resolve its
+-- spellId (UNIT_SPELLCAST_SUCCEEDED gives a spellId, not a name).
+local function getSpellInfoCompat(identifier)
+	if _G.GetSpellInfo then
+		return _G.GetSpellInfo(identifier)
+	end
+	if C_Spell and C_Spell.GetSpellInfo then
+		local info = C_Spell.GetSpellInfo(identifier)
+		if info then return info.name, nil, info.iconID, info.spellID end
+	end
+	return nil
+end
+
+-- Returns (active, icon, secondsRemaining). active is only true once
+-- Serpent Sting (as tracked on the CURRENT target specifically) has
+-- ALERT_WINDOW seconds or less left.
+function H.SerpentSting.GetStatus()
+	if not H.Range.HasFightableTarget() then return false end
+	local targetGUID = UnitGUID("target")
+	local appliedTime = targetGUID and appliedAt[targetGUID]
+	if not appliedTime then return false end
+
+	local remaining = (appliedTime + SERPENT_STING_DURATION + TRAVEL_TIME_BUFFER) - GetTime()
+	if remaining <= 0 then
+		appliedAt[targetGUID] = nil -- our own tracking says it's over -- safety net, don't keep reporting a stale application
+		return false
+	end
+	if remaining <= ALERT_WINDOW then
+		return true, serpentStingIcon, remaining
+	end
+	return false
+end
+
+-- /huntard ssdebug -- dumps exactly what's tracked right now, to tell
+-- apart "never recorded a cast" from "recorded, but outside the 3s alert
+-- window" from "something else is wrong".
+function H.SerpentSting.Debug()
+	local lines = {}
+	local function add(s) table.insert(lines, s) end
+
+	add("serpentStingSpellId (resolved at Init): " .. tostring(serpentStingSpellId))
+	add("serpentStingIcon (resolved at Init): " .. tostring(serpentStingIcon))
+	add("")
+	add("current target exists: " .. tostring(UnitExists("target")))
+	local targetGUID = UnitExists("target") and UnitGUID("target")
+	add("current target GUID: " .. tostring(targetGUID))
+	add("H.Range.HasFightableTarget(): " .. tostring(H.Range.HasFightableTarget()))
+	add("")
+
+	local count = 0
+	for guid, appliedTime in pairs(appliedAt) do
+		count = count + 1
+		local remaining = (appliedTime + SERPENT_STING_DURATION + TRAVEL_TIME_BUFFER) - GetTime()
+		add(string.format("tracked GUID=%s appliedAt=%.1f remaining=%.1fs%s",
+			guid, appliedTime, remaining, guid == targetGUID and "  <-- CURRENT TARGET" or ""))
+	end
+	add(count .. " target(s) currently tracked")
+	add("")
+
+	local active, icon, remaining = H.SerpentSting.GetStatus()
+	add(string.format("H.SerpentSting.GetStatus(): active=%s icon=%s remaining=%s",
+		tostring(active), tostring(icon), tostring(remaining)))
+
+	H.ShowCopyableText("Huntard Serpent Sting debug", table.concat(lines, "\n"))
+end
+
+function H.SerpentSting.Init()
+	local _, _, icon, spellId = getSpellInfoCompat(SERPENT_STING_NAME)
+	serpentStingIcon = icon
+	serpentStingSpellId = spellId
+
+	local watch = CreateFrame("Frame")
+	watch:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+	watch:SetScript("OnEvent", function(_, _, _, _, spellId)
+		-- UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellId) -- unit is
+		-- always "player" here since RegisterUnitEvent filtered to it.
+		local name = getSpellInfoCompat(spellId)
+		if (spellId == serpentStingSpellId or name == SERPENT_STING_NAME) and UnitExists("target") then
+			appliedAt[UnitGUID("target")] = GetTime()
+		end
+	end)
+
+	-- Safety-net cleanup: a target that somehow never gets revisited would
+	-- otherwise sit in the table forever. Nothing with a real application
+	-- should still be tracked this long after SERPENT_STING_DURATION, so
+	-- anything older than that plus a margin is definitely stale.
+	local cleanupTicker = CreateFrame("Frame")
+	cleanupTicker:SetScript("OnUpdate", function(self, elapsed)
+		self.t = (self.t or 0) + elapsed
+		if self.t > 30 then
+			self.t = 0
+			local now = GetTime()
+			for guid, appliedTime in pairs(appliedAt) do
+				if now - appliedTime > SERPENT_STING_DURATION + 10 then
+					appliedAt[guid] = nil
+				end
+			end
+		end
+	end)
+end
