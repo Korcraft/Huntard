@@ -58,12 +58,56 @@ end
 
 local hasSecretRestrictions = C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions()
 
+-- Live test (/huntard pethealthdebug) confirmed UnitHealthPercent itself
+-- -- the API this file's own header called "the intended, official fix" --
+-- STILL comes back as a secret value for pet and player alike, consistently,
+-- both in and out of combat. Not a guess: pcall ok=true, result secret=true,
+-- every time tested. Details' own client-specific code (unitframe_midnight.lua)
+-- has a commented-out line showing it tried that exact same plain call first
+-- (`--self.currentHealthPercent = UnitHealthPercent(unit, true, CurveConstants.ScaleTo100)`)
+-- and abandoned it for a different, real API: a heal-prediction "calculator"
+-- object (CreateUnitHealPredictionCalculator() + UnitGetDetailedHealPrediction()),
+-- whose :EvaluateCurrentHealthPercent() is what Details actually ships live
+-- today. Tried here as a second path, ahead of the plain call, guarded the
+-- same way -- not yet confirmed non-secret on OUR end, hence still wrapped
+-- and checked rather than trusted outright.
+local healCalculators = {} -- [unit] = calculator object, created once and reused (same as Details does per-frame)
+local function getCalculatorFor(unit)
+	if not (_G.CreateUnitHealPredictionCalculator) then return nil end
+	if not healCalculators[unit] then
+		local ok, calc = pcall(_G.CreateUnitHealPredictionCalculator)
+		if ok then healCalculators[unit] = calc end
+	end
+	return healCalculators[unit]
+end
+
+local function getHealthPercentViaCalculator(unit)
+	if not _G.UnitGetDetailedHealPrediction then return nil end
+	local calculator = getCalculatorFor(unit)
+	if not calculator then return nil end
+
+	local okPredict = pcall(_G.UnitGetDetailedHealPrediction, unit, nil, calculator)
+	if not okPredict then return nil end
+
+	if Enum and Enum.UnitMaximumHealthMode and calculator.SetMaximumHealthMode then
+		pcall(calculator.SetMaximumHealthMode, calculator, Enum.UnitMaximumHealthMode.Default)
+	end
+
+	local okPct, pct = pcall(calculator.EvaluateCurrentHealthPercent, calculator, CurveConstants and CurveConstants.ScaleTo100)
+	if okPct and pct and not (_G.issecretvalue and _G.issecretvalue(pct)) then
+		return pct
+	end
+	return nil
+end
+
 -- Returns a 0-100 health percent for `unit`, or nil if it genuinely can't
--- be determined right now. Prefers UnitHealthPercent (the secrecy-safe
--- replacement) when this client has secret restrictions at all; falls back
--- to plain UnitHealth/UnitHealthMax division otherwise (older clients
--- without either the restriction or the replacement API).
+-- be determined right now. Tries the heal-prediction calculator first (see
+-- above), then plain UnitHealthPercent, then falls back to raw
+-- UnitHealth/UnitHealthMax division (older clients without any of this).
 local function getHealthPercent(unit)
+	local viaCalculator = getHealthPercentViaCalculator(unit)
+	if viaCalculator then return viaCalculator end
+
 	if hasSecretRestrictions and _G.UnitHealthPercent then
 		local ok, pct = pcall(_G.UnitHealthPercent, unit, true, CurveConstants and CurveConstants.ScaleTo100)
 		if ok and pct and not (_G.issecretvalue and _G.issecretvalue(pct)) then
@@ -84,21 +128,82 @@ function H.PetHealth.SetThreshold(pct)
 	return pct
 end
 
--- Returns a display status table, or nil if nothing to show (including:
--- health is currently unreadable -- fails safe to "don't alert" rather
--- than guessing).
---   { portrait = "pet", slash = true } or { texture = mendPetIcon }
-function H.PetHealth.GetDisplayStatus()
-	if not UnitExists("pet") then return nil end
+-- ---------------------------------------------------------------------------
+-- THRESHOLD DETECTION -- drives the real Mend Pet alert. No text/number is
+-- ever displayed anywhere (explicitly not wanted) -- this exists purely to
+-- answer one boolean question: is the pet's health currently at/below the
+-- configured threshold?
+--
+-- REAL MECHANISM, confirmed live via /huntard pethealthtexttest and
+-- pethealthbartest while the pet was actually taking damage, not guessed:
+-- a secret health VALUE cannot be used in Lua logic at all -- arithmetic,
+-- relational comparison ("attempt to compare a secret number value"), and
+-- naive tostring/concat all confirmed to error out. But handing that SAME
+-- secret value straight into a native StatusBar's SetValue() works -- the
+-- bar visibly fills/drains correctly, exactly like Details' own
+-- client-specific code does (passes the secret value straight to
+-- self:SetValue() without ever reading it back).
+--
+-- The trick: instead of measuring health as a percentage of MAX health (0 to
+-- maxHealth, always secret-derived), set the bar's range to [0, thresholdHP]
+-- -- thresholdHP = maxHealth * threshold/100, computed from maxHealth (NOT
+-- secret) and our own setting (NOT secret), so that arithmetic is fine. Then
+-- SetValue(currentHealth) -- a StatusBar visually CLAMPS any value at/above
+-- its max to render fully filled. So the fill texture renders at FULL WIDTH
+-- whenever health is at/above the threshold, and at a SMALLER width whenever
+-- it's genuinely below. That rendered WIDTH is a layout/geometry output, not
+-- the protected data value -- comparing it against the bar's own (plain,
+-- known) total width is the boolean decision, and it never touches the
+-- secret health number with a comparison.
+local measureBar
 
-	if UnitIsDeadOrGhost("pet") then
-		return { portrait = "pet", slash = true }
-	end
+local function getMeasureBar()
+	if measureBar then return measureBar end
+	measureBar = CreateFrame("StatusBar", "HuntardPetHealthMeasureBar", UIParent)
+	measureBar:SetSize(200, 10)
+	-- Positioned far off-screen, not hidden -- a Hide()'d frame may skip
+	-- layout/texture-size updates entirely, which would make GetWidth()
+	-- stale or unreliable. Shown-but-off-screen keeps real layout math
+	-- running while staying invisible to you.
+	measureBar:SetPoint("CENTER", UIParent, "CENTER", 0, -10000)
+	measureBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+	measureBar:Show()
+	return measureBar
+end
 
-	local pct = getHealthPercent("pet")
-	if not pct or pct > H.db.petHealth.threshold then return nil end
+-- Returns true/false, or nil if it genuinely can't be determined right now
+-- (fails safe to "don't alert" rather than guessing) -- never touches
+-- UnitHealth("pet") with arithmetic or comparison, only the proven-safe
+-- pass-through into SetMinMaxValues/SetValue, then a comparison on the
+-- RENDERED WIDTH (a plain geometry number).
+local function isPetBelowThreshold()
+	local maxHealth = UnitHealthMax("pet")
+	if not maxHealth or type(maxHealth) ~= "number" or maxHealth <= 0 then return nil end
+	if _G.issecretvalue and _G.issecretvalue(maxHealth) then return nil end
 
-	return { texture = mendPetIcon }
+	local thresholdValue = maxHealth * (H.db.petHealth.threshold / 100)
+	local bar = getMeasureBar()
+
+	local okMinMax = pcall(bar.SetMinMaxValues, bar, 0, thresholdValue)
+	local okValue = pcall(bar.SetValue, bar, UnitHealth("pet"))
+	if not (okMinMax and okValue) then return nil end
+
+	local okTex, tex = pcall(bar.GetStatusBarTexture, bar)
+	if not (okTex and tex) then return nil end
+
+	local okFillWidth, fillWidth = pcall(tex.GetWidth, tex)
+	if not okFillWidth or type(fillWidth) ~= "number" then return nil end
+	if _G.issecretvalue and _G.issecretvalue(fillWidth) then return nil end
+
+	local okBarWidth, barWidth = pcall(bar.GetWidth, bar)
+	if not okBarWidth or type(barWidth) ~= "number" then return nil end
+
+	-- Full width (within a small margin for float rounding) means health is
+	-- at/above the threshold (SetValue clamped the fill); meaningfully less
+	-- means it's genuinely below.
+	local okCompare, below = pcall(function() return fillWidth < (barWidth - 0.5) end)
+	if not okCompare then return nil end
+	return below
 end
 
 -- /huntard calls into this to show a live reading alongside the configured
@@ -140,14 +245,215 @@ function H.PetHealth.Debug()
 			unit, tostring(_G.issecretvalue and _G.issecretvalue(h)),
 			tostring(_G.issecretvalue and _G.issecretvalue(m)),
 			tostring(getHealthPercent(unit))))
+
+		-- Granular breakdown of the UnitHealthPercent call itself, since
+		-- getHealthPercent() alone collapses "pcall errored", "returned nil",
+		-- and "returned a secret value" all down to the same plain nil --
+		-- not enough to tell apart WHY it failed.
+		if hasSecretRestrictions and _G.UnitHealthPercent then
+			local ok, pct = pcall(_G.UnitHealthPercent, unit, true, CurveConstants and CurveConstants.ScaleTo100)
+			-- tostring() on a secret value returns ANOTHER secret (tainted)
+			-- value, not a normal string -- confirmed via a real crash here
+			-- (table.concat choking on it downstream). pct must be checked
+			-- with issecretvalue() BEFORE it ever touches tostring, same
+			-- lesson as the UNIT_AURA guard in AspectAlert.lua.
+			local isSecret = ok and _G.issecretvalue and _G.issecretvalue(pct)
+			local resultText
+			if not ok then
+				resultText = tostring(pct) -- pct is a plain error-message string when ok == false, safe to tostring
+			elseif isSecret then
+				resultText = "<secret>"
+			else
+				resultText = tostring(pct)
+			end
+			add(string.format("  UnitHealthPercent(%s, true, ScaleTo100): pcall ok=%s  raw result=%s  result secret=%s",
+				unit, tostring(ok), resultText, tostring(isSecret)))
+		end
+
+		-- Same granular breakdown for the heal-prediction calculator path
+		-- (see its own comment above getHealthPercentViaCalculator) -- this
+		-- is the thing actually being tested here: does Details' own
+		-- confirmed-working alternative also work for us, unlike the plain
+		-- UnitHealthPercent call above.
+		if _G.UnitGetDetailedHealPrediction and _G.CreateUnitHealPredictionCalculator then
+			local calculator = getCalculatorFor(unit)
+			local okPredict = calculator and pcall(_G.UnitGetDetailedHealPrediction, unit, nil, calculator)
+			local okPct, pct = false, nil
+			if okPredict then
+				if Enum and Enum.UnitMaximumHealthMode and calculator.SetMaximumHealthMode then
+					pcall(calculator.SetMaximumHealthMode, calculator, Enum.UnitMaximumHealthMode.Default)
+				end
+				okPct, pct = pcall(calculator.EvaluateCurrentHealthPercent, calculator, CurveConstants and CurveConstants.ScaleTo100)
+			end
+			local calcIsSecret = okPct and _G.issecretvalue and _G.issecretvalue(pct)
+			local calcResultText
+			if not okPredict then
+				calcResultText = "UnitGetDetailedHealPrediction failed"
+			elseif not okPct then
+				calcResultText = tostring(pct) -- error message, safe to tostring
+			elseif calcIsSecret then
+				calcResultText = "<secret>"
+			else
+				calcResultText = tostring(pct)
+			end
+			add(string.format("  calculator:EvaluateCurrentHealthPercent(%s): predict ok=%s  pcall ok=%s  raw result=%s  result secret=%s",
+				unit, tostring(okPredict), tostring(okPct), calcResultText, tostring(calcIsSecret)))
+		end
+
+		-- Different kind of test from everything above: not trying to READ
+		-- the number at all, just asking a relational question of it
+		-- directly ("is current health below half of max") and seeing
+		-- whether THAT'S permitted even though extracting the exact value
+		-- isn't. The comparison result itself still gets issecretvalue()
+		-- checked before tostring -- a secret boolean could be just as real
+		-- as a secret number, and crash the exact same way if assumed safe.
+		do
+			local okCompare, belowHalf = pcall(function()
+				return UnitHealth(unit) < (UnitHealthMax(unit) * 0.5)
+			end)
+			local compareIsSecret = okCompare and _G.issecretvalue and _G.issecretvalue(belowHalf)
+			local compareText
+			if not okCompare then
+				compareText = "comparison itself errored: " .. tostring(belowHalf)
+			elseif compareIsSecret then
+				compareText = "<secret boolean>"
+			else
+				compareText = tostring(belowHalf)
+			end
+			add(string.format("  UnitHealth(%s) < UnitHealthMax(%s)*0.5: pcall ok=%s  result=%s  result secret=%s",
+				unit, unit, tostring(okCompare), compareText, tostring(compareIsSecret)))
+		end
 	end
 	checkUnit("pet")
 	checkUnit("player")
+	-- Testing whether this restriction is specific to YOUR OWN health
+	-- (player+pet) or applies to every unit -- a healing addon reading party
+	-- members' health would be a completely different code path if so.
+	checkUnit("party1")
+	checkUnit("party2")
+	checkUnit("party3")
+	checkUnit("party4")
 
 	H.ShowCopyableText("Huntard pet health debug", table.concat(lines, "\n"))
 end
 
+-- ---------------------------------------------------------------------------
+-- LOW HEALTH ICON -- appears when the pet's health is at or below the alert
+-- number: its max health times the configured threshold percent.
+--
+-- Health is a secret value, so Lua can never ask "is it <= the alert number?".
+-- The native StatusBar answers instead: with a range of [alert, alert + 1],
+-- its fill is empty at the alert number or less and full above it. The icon
+-- lives in a clipping frame spanning from the fill's right edge to the bar's
+-- right edge -- the UNFILLED part -- so it is fully revealed at the alert
+-- number or less and zero-width otherwise.
+-- Lua only passes the value through; it never reads or compares it, which
+-- also means nothing here can react to the alert (no sound, for example).
+-- ---------------------------------------------------------------------------
+
+local ALERT_TEST_SECONDS = 5
+local MEND_PET_SPELL_ID = 136 -- rank 1; fallback if the name lookup fails
+
+local alertFrame, alertGate, alertTestUntil
+local gateHealth = 0 -- the alert number the gate's range is currently set to
+
+function H.PetHealth.TestAlert()
+	alertTestUntil = GetTime() + ALERT_TEST_SECONDS
+end
+
+-- The health number the alert triggers at, or nil if max health is unavailable.
+function H.PetHealth.GetAlertHealth()
+	if not UnitExists("pet") then return nil end
+	local maxHealth = UnitHealthMax("pet")
+	if _G.issecretvalue and _G.issecretvalue(maxHealth) then return nil end
+	if type(maxHealth) ~= "number" or maxHealth <= 0 then return nil end
+	return math.floor(maxHealth * H.db.petHealth.threshold / 100)
+end
+
+local function setGateHealth(health)
+	if health ~= gateHealth then
+		gateHealth = health
+		alertGate:SetMinMaxValues(health, health + 1)
+	end
+end
+
+local function hideAlert()
+	alertGate:SetValue(gateHealth + 1)
+	alertFrame:Hide()
+end
+
+-- Returns a display status table for AlertCluster, or nil if nothing to show:
+--   { portrait = "pet", slash = true } -- dead pet
+--   { overlay = alertFrame } -- living pet. Lua can't know whether the icon is
+--   currently revealed, so a living pet always holds its cluster slot.
+function H.PetHealth.GetDisplayStatus()
+	if not alertFrame then return nil end
+
+	if alertTestUntil and GetTime() < alertTestUntil then
+		alertGate:SetValue(gateHealth)
+		alertFrame:Show()
+		return { overlay = alertFrame }
+	end
+	alertTestUntil = nil
+
+	if not UnitExists("pet") then
+		hideAlert()
+		return nil
+	end
+
+	if UnitIsDeadOrGhost("pet") then
+		hideAlert()
+		return { portrait = "pet", slash = true }
+	end
+
+	local alertHealth = H.PetHealth.GetAlertHealth()
+	if not alertHealth then
+		hideAlert()
+		return nil
+	end
+	setGateHealth(alertHealth)
+
+	if not pcall(alertGate.SetValue, alertGate, UnitHealth("pet")) then
+		hideAlert()
+		return nil
+	end
+	alertFrame:Show()
+	return { overlay = alertFrame }
+end
+
+local function initAlertDisplay()
+	alertFrame = CreateFrame("Frame", "HuntardPetHealthAlert", UIParent)
+	alertFrame:SetSize(48, 48)
+	alertFrame:SetFrameStrata("MEDIUM")
+	alertFrame:SetFrameLevel(20)
+
+	alertGate = CreateFrame("StatusBar", nil, alertFrame)
+	alertGate:SetAllPoints()
+	alertGate:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+	alertGate:SetStatusBarColor(0, 0, 0, 0)
+	alertGate:SetMinMaxValues(gateHealth, gateHealth + 1)
+	alertGate:SetValue(gateHealth + 1)
+
+	local reveal = CreateFrame("Frame", nil, alertGate)
+	reveal:SetClipsChildren(true)
+	reveal:SetPoint("TOPLEFT", alertGate:GetStatusBarTexture(), "TOPRIGHT")
+	reveal:SetPoint("BOTTOMRIGHT", alertGate, "BOTTOMRIGHT")
+
+	local content = CreateFrame("Frame", nil, reveal)
+	content:SetAllPoints(alertFrame)
+
+	local icon = content:CreateTexture(nil, "ARTWORK")
+	icon:SetAllPoints()
+	icon:SetTexture(mendPetIcon)
+
+	alertFrame:Hide()
+end
+
 function H.PetHealth.Init()
 	local _, _, icon = getSpellInfoCompat(MEND_PET_NAME)
+	if not icon then
+		_, _, icon = getSpellInfoCompat(MEND_PET_SPELL_ID)
+	end
 	mendPetIcon = icon
+	initAlertDisplay()
 end

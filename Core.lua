@@ -135,7 +135,8 @@ eventFrame:SetScript("OnEvent", function(_, event, addonName)
 		if H.AlertCluster and H.AlertCluster.Init then H.AlertCluster.Init() end
 		if H.PetAbilities and H.PetAbilities.Init then H.PetAbilities.Init() end
 		if H.AmmoAlert and H.AmmoAlert.Init then H.AmmoAlert.Init() end
-		print("|cff33ff99Huntard|r loaded. Type |cffffffff/huntard help|r for commands.")
+		if H.Settings and H.Settings.Init then H.Settings.Init() end
+		print("|cff33ff99Huntard|r loaded. Type |cffffffff/huntard|r for settings or |cffffffff/huntard help|r for commands.")
 	end
 end)
 
@@ -153,9 +154,20 @@ local function refreshAllMovables()
 	if H.WarningText and H.WarningText.Refresh then H.WarningText.Refresh() end
 	if H.AlertCluster and H.AlertCluster.Refresh then H.AlertCluster.Refresh() end
 end
+H.RefreshMovables = refreshAllMovables
+
+function H.ResetPositions()
+	local d = {}
+	applyDefaults(d, DEFAULTS)
+	H.db.warningText = d.warningText
+	H.db.alertCluster = d.alertCluster
+	refreshAllMovables()
+	print("|cff33ff99Huntard|r position/size reset to default.")
+end
 
 local function printHelp()
 	print("|cff33ff99Huntard|r commands:")
+	print("  /huntard              - open the settings window")
 	print("  /huntard lock         - lock the status text and the alert icon cluster in place")
 	print("  /huntard unlock       - unlock them so you can drag (click+drag) and resize (mouse wheel) them")
 	print("  /huntard reset        - reset both back to their default position/size")
@@ -165,6 +177,7 @@ local function printHelp()
 		.. (H.db and H.db.aspectAlert and H.db.aspectAlert.preferredAspect or "any") .. ")")
 	print("  /huntard debug        - print live melee/ranged range-check values against your current target")
 	print("  /huntard pethealthdebug - print whether your pet's health is currently readable or secret, and why")
+	print("  /huntard petalerttest - show the low pet health alert for 5 seconds")
 	print("  /huntard ssdebug      - print exactly what Serpent Sting tracking currently has recorded")
 	print("  /huntard bufframedebug - print exactly what's live-detected right now via Blizzard's default buff icon row")
 	print("  /huntard auradebug    - print what the UNIT_AURA instance tracker currently has, and whether a direct query is restricted right now")
@@ -188,7 +201,9 @@ SLASH_HUNTARD1 = "/huntard"
 SlashCmdList.HUNTARD = function(msg)
 	msg = (msg or ""):trim():lower()
 
-	if msg == "lock" then
+	if msg == "" and H.Settings then
+		H.Settings.Toggle()
+	elseif msg == "lock" then
 		H.db.locked = true
 		refreshAllMovables()
 		print("|cff33ff99Huntard|r locked.")
@@ -199,12 +214,7 @@ SlashCmdList.HUNTARD = function(msg)
 			.. "scroll the mouse wheel over either one to resize it. The anchor is the small white square -- "
 			.. "active alerts fan out around it, centered when there's one, side-by-side when there's more than one.")
 	elseif msg == "reset" then
-		local d = {}
-		applyDefaults(d, DEFAULTS)
-		H.db.warningText = d.warningText
-		H.db.alertCluster = d.alertCluster
-		refreshAllMovables()
-		print("|cff33ff99Huntard|r position/size reset to default.")
+		H.ResetPositions()
 	elseif msg == "combatonly" then
 		H.db.aspectAlertRequireCombat = not H.db.aspectAlertRequireCombat
 		print("|cff33ff99Huntard|r aspect alert combat-only: " .. (H.db.aspectAlertRequireCombat and "ON" or "off"))
@@ -222,6 +232,8 @@ SlashCmdList.HUNTARD = function(msg)
 		if H.Range then H.Range.Debug() end
 	elseif msg == "pethealthdebug" then
 		if H.PetHealth then H.PetHealth.Debug() end
+	elseif msg == "petalerttest" then
+		if H.PetHealth then H.PetHealth.TestAlert() end
 	elseif msg == "ssdebug" then
 		if H.SerpentSting then H.SerpentSting.Debug() end
 	elseif msg == "bufframedebug" then
@@ -239,7 +251,9 @@ SlashCmdList.HUNTARD = function(msg)
 		print("|cff33ff99Huntard|r cleared " .. count .. " pet ability reminder state(s) (Remind Me / Don't Remind Me history). Run /huntard pettest to recheck fresh.")
 	elseif msg:match("^pethealth%s+%d+$") then
 		local pct = H.PetHealth.SetThreshold(tonumber(msg:match("%d+")))
-		print("|cff33ff99Huntard|r pet health alert threshold set to " .. pct .. "%.")
+		local alertHealth = H.PetHealth.GetAlertHealth()
+		print("|cff33ff99Huntard|r pet health alert threshold set to " .. pct .. "%"
+			.. (alertHealth and (" (" .. alertHealth .. " health on this pet).") or "."))
 	elseif msg:match("^viperlow%s+%d+$") then
 		local pct = H.ViperAlert.SetLowThreshold(tonumber(msg:match("%d+")))
 		print("|cff33ff99Huntard|r Viper suggestion will trigger at or below " .. pct .. "% mana.")

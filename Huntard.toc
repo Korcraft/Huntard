@@ -3,7 +3,7 @@
 ## Title: Huntard
 ## Notes: Hunter toolkit -- experimental.
 ## Author: Korcraft
-## Version: 0.3.0
+## Version: 0.4.0
 ## SavedVariables: HuntardDB
 ## X-License: MIT
 
@@ -23,3 +23,4 @@ PetHealth.lua
 AlertCluster.lua
 PetAbilities.lua
 AmmoAlert.lua
+Settings.lua

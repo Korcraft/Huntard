@@ -28,20 +28,48 @@ local H = Huntard
 H.AmmoAlert = H.AmmoAlert or {}
 
 local DEFAULT_THRESHOLDS = { 75, 50, 25 }
-local QUIVER_CLASS_ID = Enum and Enum.ItemClass and Enum.ItemClass.Quiver
+local QUIVER_CLASS_ID = Enum and Enum.ItemClass and Enum.ItemClass.Quiver or 11
+local QUIVER_BAG_FAMILIES = 3 -- bag family bits: 1 = quiver, 2 = ammo pouch
 
 local lastPct -- nil until the first real reading, so login/reload never fires a false crossing
+
+local function getBagInventorySlot(bagID)
+	if C_Container and C_Container.ContainerIDToInventoryID then
+		local ok, slot = pcall(C_Container.ContainerIDToInventoryID, bagID)
+		if ok and slot then return slot end
+	end
+	if _G.ContainerIDToInventoryID then
+		local ok, slot = pcall(_G.ContainerIDToInventoryID, bagID)
+		if ok and slot then return slot end
+	end
+	local ok, slot = pcall(GetInventorySlotInfo, "Bag" .. (bagID - 1) .. "Slot")
+	if ok then return slot end
+	return nil
+end
+
+local function getBagItemClass(itemId)
+	if not itemId then return nil end
+	local getInfo = (C_Item and C_Item.GetItemInfoInstant) or _G.GetItemInfoInstant
+	if not getInfo then return nil end
+	local ok, _, _, _, _, _, classID = pcall(getInfo, itemId)
+	return ok and classID or nil
+end
+
+local function getBagFamily(bagID)
+	local ok, _, family = pcall(C_Container.GetContainerNumFreeSlots, bagID)
+	if ok and type(family) == "number" then return family end
+	return nil
+end
 
 local function findQuiverBag()
 	local numBags = NUM_BAG_SLOTS or 4
 	for bagID = 1, numBags do
-		local invSlot = ContainerIDToInventoryID and ContainerIDToInventoryID(bagID)
+		local invSlot = getBagInventorySlot(bagID)
 		local itemId = invSlot and GetInventoryItemID("player", invSlot)
-		if itemId then
-			local ok, _, _, _, _, _, classID = pcall(C_Item.GetItemInfoInstant, itemId)
-			if ok and classID == QUIVER_CLASS_ID then
-				return bagID, itemId
-			end
+		local family = getBagFamily(bagID)
+		if getBagItemClass(itemId) == QUIVER_CLASS_ID
+			or (family and bit.band(family, QUIVER_BAG_FAMILIES) ~= 0) then
+			return bagID, itemId
 		end
 	end
 	return nil
@@ -86,10 +114,17 @@ local function checkThresholds(pct)
 		return
 	end
 	if pct < lastPct then
+		local crossed = false
 		for _, threshold in ipairs(H.db.ammoAlert.thresholds) do
 			if lastPct > threshold and pct <= threshold then
 				UIErrorsFrame:AddMessage(string.format("Ammo at %d%%", threshold), 1.0, 0.5, 0.1)
+				crossed = true
 			end
+		end
+		if crossed then
+			-- Once per drop, even if a big move crossed several thresholds.
+			-- Master channel so it still plays with game sound effects off.
+			PlaySound(SOUNDKIT and SOUNDKIT.RAID_WARNING or 8959, "Master")
 		end
 	end
 	lastPct = pct
@@ -118,6 +153,15 @@ end
 function H.AmmoAlert.Debug()
 	local lines = {}
 	local function add(s) table.insert(lines, s) end
+
+	for bag = 1, NUM_BAG_SLOTS or 4 do
+		local invSlot = getBagInventorySlot(bag)
+		local bagItem = invSlot and GetInventoryItemID("player", invSlot)
+		add(string.format("bag %d: invSlot=%s item=%s class=%s family=%s slots=%s",
+			bag, tostring(invSlot), tostring(bagItem), tostring(getBagItemClass(bagItem)),
+			tostring(getBagFamily(bag)), tostring(C_Container.GetContainerNumSlots(bag))))
+	end
+	add("")
 
 	local bagID, itemId = findQuiverBag()
 	add("detected quiver bag ID: " .. tostring(bagID))

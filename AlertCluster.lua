@@ -26,6 +26,7 @@ local GAP = 10 -- pixels between adjacent icons at scale 1.0
 --   { texture = ..., countdown = secondsRemaining, cooldownWindow = windowSeconds } -- icon + countdown + swipe
 --   { text = "...", textColor = {r,g,b} } -- plain text, no icon
 --   { portrait = "unit", slash = true } -- that unit's own 3D portrait, optionally with a red diagonal slash over it
+--   { overlay = frame } -- holds the slot and pins the provider's own frame to it
 local PROVIDERS = {
 	function() return H.AlertIcon and H.AlertIcon.GetDisplayStatus and H.AlertIcon.GetDisplayStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetDisplayStatus and H.PetHealth.GetDisplayStatus() end,
@@ -88,6 +89,22 @@ end
 
 local function applySlot(f, status, size)
 	f:SetSize(size, size)
+
+	if status.overlay then
+		f.bg:Hide()
+		f.icon:Hide()
+		f.cooldownSwipe:Hide()
+		f.countdown:Hide()
+		f.text:Hide()
+		f.slash:Hide()
+		if status.overlay.slot ~= f then
+			status.overlay.slot = f
+			status.overlay:ClearAllPoints()
+			status.overlay:SetAllPoints(f)
+		end
+		return
+	end
+
 	f.bg:SetShown(not H.db.locked)
 
 	if status.text then
