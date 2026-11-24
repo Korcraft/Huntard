@@ -79,6 +79,44 @@ local appliedAt = {}
 local serpentStingIcon
 local serpentStingSpellId
 
+-- Confirmed live in a party dungeon: UnitGUID("target") can be a secret
+-- value, and a secret can't be used as a table key. It can also change between
+-- readable and secret on the SAME mob (e.g. cast before the pull, read during
+-- combat), so a cast is always recorded in currentTargetAppliedAt as well as
+-- by GUID when readable. currentTargetAppliedAt resets on every target change,
+-- so a timer can't show on the wrong mob. Multi-dot tracking across target
+-- swaps only works while GUIDs are readable.
+local currentTargetAppliedAt
+local function readableTargetGUID()
+	local guid = UnitGUID("target")
+	if _G.issecretvalue and _G.issecretvalue(guid) then return nil end
+	return guid
+end
+
+-- [nameplate frame] = GetTime() of your last cast on that mob. Keeps multi-dot
+-- working while GUIDs are secret: each visible mob has its own nameplate
+-- frame. Plates are recycled between mobs, so an entry is dropped the moment
+-- its plate is removed (see NAME_PLATE_UNIT_REMOVED in Init).
+local appliedByPlate = {}
+
+local function plateForUnit(unit)
+	if not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then return nil end
+	local ok, plate = pcall(C_NamePlate.GetNamePlateForUnit, unit)
+	if not ok or (_G.issecretvalue and _G.issecretvalue(plate)) then return nil end
+	return plate
+end
+
+-- The newest known cast on the current target, from any record.
+local function appliedTimeForTarget()
+	local guid = readableTargetGUID()
+	local plate = plateForUnit("target")
+	local newest = currentTargetAppliedAt
+	for _, t in ipairs({ guid and appliedAt[guid] or 0, plate and appliedByPlate[plate] or 0 }) do
+		if t > 0 and (not newest or t > newest) then newest = t end
+	end
+	return newest
+end
+
 -- GetSpellInfo -- NOT an aura read, confirmed unaffected by the secrecy
 -- restriction (Arcane Shot's own declared range read correctly in the
 -- same in-combat debug run that proved aura reads were blocked) -- used
@@ -100,13 +138,17 @@ end
 -- ALERT_WINDOW seconds or less left.
 function H.SerpentSting.GetStatus()
 	if not H.Range.HasFightableTarget() then return false end
-	local targetGUID = UnitGUID("target")
-	local appliedTime = targetGUID and appliedAt[targetGUID]
+	local appliedTime = appliedTimeForTarget()
 	if not appliedTime then return false end
 
 	local remaining = (appliedTime + SERPENT_STING_DURATION + TRAVEL_TIME_BUFFER) - GetTime()
 	if remaining <= 0 then
-		appliedAt[targetGUID] = nil -- our own tracking says it's over -- safety net, don't keep reporting a stale application
+		-- our own tracking says it's over -- safety net, don't keep reporting a stale application
+		local targetGUID = readableTargetGUID()
+		if targetGUID then appliedAt[targetGUID] = nil end
+		local targetPlate = plateForUnit("target")
+		if targetPlate then appliedByPlate[targetPlate] = nil end
+		currentTargetAppliedAt = nil
 		return false
 	end
 	if remaining <= ALERT_WINDOW then
@@ -126,8 +168,15 @@ function H.SerpentSting.Debug()
 	add("serpentStingIcon (resolved at Init): " .. tostring(serpentStingIcon))
 	add("")
 	add("current target exists: " .. tostring(UnitExists("target")))
-	local targetGUID = UnitExists("target") and UnitGUID("target")
-	add("current target GUID: " .. tostring(targetGUID))
+	local targetGUID = UnitExists("target") and readableTargetGUID()
+	add("current target GUID: " .. (targetGUID and tostring(targetGUID) or "none or secret"))
+	add("current target timer started at: " .. tostring(currentTargetAppliedAt))
+	local debugPlate = UnitExists("target") and plateForUnit("target")
+	add("current target has nameplate: " .. tostring(debugPlate and true or false)
+		.. "  timer on that plate: " .. tostring(debugPlate and appliedByPlate[debugPlate]))
+	local plateCount = 0
+	for _ in pairs(appliedByPlate) do plateCount = plateCount + 1 end
+	add("mobs tracked by nameplate: " .. plateCount)
 	add("H.Range.HasFightableTarget(): " .. tostring(H.Range.HasFightableTarget()))
 	add("")
 
@@ -155,12 +204,34 @@ function H.SerpentSting.Init()
 
 	local watch = CreateFrame("Frame")
 	watch:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-	watch:SetScript("OnEvent", function(_, _, _, _, spellId)
+	watch:RegisterEvent("PLAYER_TARGET_CHANGED")
+	watch:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
+	watch:SetScript("OnEvent", function(_, event, unit, _, spellId)
+		if event == "PLAYER_TARGET_CHANGED" then
+			currentTargetAppliedAt = nil
+			return
+		end
+		if event == "NAME_PLATE_UNIT_REMOVED" then
+			-- If the plate can't be identified, drop them all: a missed warning
+			-- is better than a recycled plate showing another mob's timer.
+			local plate = not (_G.issecretvalue and _G.issecretvalue(unit)) and plateForUnit(unit)
+			if plate then
+				appliedByPlate[plate] = nil
+			else
+				wipe(appliedByPlate)
+			end
+			return
+		end
 		-- UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellId) -- unit is
 		-- always "player" here since RegisterUnitEvent filtered to it.
 		local name = getSpellInfoCompat(spellId)
 		if (spellId == serpentStingSpellId or name == SERPENT_STING_NAME) and UnitExists("target") then
-			appliedAt[UnitGUID("target")] = GetTime()
+			local now = GetTime()
+			currentTargetAppliedAt = now
+			local guid = readableTargetGUID()
+			if guid then appliedAt[guid] = now end
+			local plate = plateForUnit("target")
+			if plate then appliedByPlate[plate] = now end
 		end
 	end)
 
@@ -177,6 +248,11 @@ function H.SerpentSting.Init()
 			for guid, appliedTime in pairs(appliedAt) do
 				if now - appliedTime > SERPENT_STING_DURATION + 10 then
 					appliedAt[guid] = nil
+				end
+			end
+			for plate, appliedTime in pairs(appliedByPlate) do
+				if now - appliedTime > SERPENT_STING_DURATION + 10 then
+					appliedByPlate[plate] = nil
 				end
 			end
 		end

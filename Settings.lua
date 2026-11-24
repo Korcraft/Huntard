@@ -188,11 +188,11 @@ local function buildWindow()
 		H.PetHealth.SetThreshold,
 		describePetThreshold)
 
-	makeHeader(frame, -114, "Viper")
-	makeSlider(frame, -136, "Switch to Viper at or below", 0, 100,
+	makeHeader(frame, -114, "Viper Sting")
+	makeSlider(frame, -136, "Show icon at or below", 0, 100,
 		function() return H.db.viperAlert.lowThreshold end,
 		H.ViperAlert.SetLowThreshold)
-	makeSlider(frame, -178, "Switch back at or above", 0, 100,
+	makeSlider(frame, -178, "Hide icon at or above", 0, 100,
 		function() return H.db.viperAlert.highThreshold end,
 		H.ViperAlert.SetHighThreshold)
 

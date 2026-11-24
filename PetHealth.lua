@@ -354,7 +354,11 @@ end
 local ALERT_TEST_SECONDS = 5
 local MEND_PET_SPELL_ID = 136 -- rank 1; fallback if the name lookup fails
 
-local alertFrame, alertGate, alertTestUntil
+-- alertShifter is an invisible second gate with the same range and value. Its
+-- fill is full above the alert number and empty at or below it, so another
+-- icon anchored to the fill's right edge slides aside natively only while the
+-- Mend Pet icon is revealed. See AlertCluster's layout().
+local alertFrame, alertGate, alertShifter, alertTestUntil
 local gateHealth = 0 -- the alert number the gate's range is currently set to
 
 function H.PetHealth.TestAlert()
@@ -374,23 +378,99 @@ local function setGateHealth(health)
 	if health ~= gateHealth then
 		gateHealth = health
 		alertGate:SetMinMaxValues(health, health + 1)
+		alertShifter:SetMinMaxValues(health, health + 1)
 	end
 end
 
+-- May receive a secret value: both setters only pass it through to the widget.
+local function setGateValue(value)
+	alertGate:SetValue(value)
+	alertShifter:SetValue(value)
+end
+
 local function hideAlert()
-	alertGate:SetValue(gateHealth + 1)
+	setGateValue(gateHealth + 1)
 	alertFrame:Hide()
 end
 
+function H.PetHealth.GetLayoutShifter()
+	return alertShifter
+end
+
+-- A dead pet stops existing as a unit once you die and res, so "no pet unit"
+-- can't be read as "nothing wrong". Remembered per character (surviving a
+-- reload or relog) and cleared only when a living pet is actually seen.
+local REVIVE_PET_NAME = "Revive Pet"
+local REVIVE_PET_SPELL_ID = 982
+local revivePetIcon
+
+local function characterKey()
+	local guid = UnitGUID("player")
+	if _G.issecretvalue and _G.issecretvalue(guid) then return nil end
+	return guid
+end
+
+local function isPetRememberedDead()
+	local key = characterKey()
+	return key and H.db.petDeadByCharacter and H.db.petDeadByCharacter[key] or false
+end
+
+local function rememberPetDead(isDead)
+	local key = characterKey()
+	if not key then return end
+	if isDead then
+		H.db.petDeadByCharacter = H.db.petDeadByCharacter or {}
+		H.db.petDeadByCharacter[key] = true
+	elseif H.db.petDeadByCharacter then
+		H.db.petDeadByCharacter[key] = nil
+	end
+end
+
+-- A living pet that simply isn't out. Uses the same gate as the Cheetah/Pack
+-- warning: a living attackable target, plus the optional combat-only setting.
+local CALL_PET_SPELL_ID = 883
+local CALL_PET_FALLBACK_ICON = "Interface\\Icons\\Ability_Hunter_BeastCall"
+local PET_RETURN_GRACE = 2 -- seconds for a pet to reappear after zoning or dismounting
+local callPetIcon
+local petGoneSince
+
+local function knowsCallPet()
+	if C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(CALL_PET_SPELL_ID) then
+		return true
+	end
+	return _G.IsPlayerSpell and _G.IsPlayerSpell(CALL_PET_SPELL_ID) or false
+end
+
+-- The game removes the pet by itself during these and brings it back after.
+local function petTemporarilyAway()
+	return UnitIsDeadOrGhost("player") or IsMounted() or UnitOnTaxi("player")
+		or (_G.UnitInVehicle and _G.UnitInVehicle("player"))
+end
+
+local function shouldWarnPetMissing()
+	if petTemporarilyAway() then
+		petGoneSince = nil
+		return false
+	end
+	local now = GetTime()
+	petGoneSince = petGoneSince or now
+	if now - petGoneSince < PET_RETURN_GRACE then return false end
+	if not H.Range.HasFightableTarget() then return false end
+	if H.db.aspectAlertRequireCombat and not UnitAffectingCombat("player") then return false end
+	return knowsCallPet()
+end
+
 -- Returns a display status table for AlertCluster, or nil if nothing to show:
---   { portrait = "pet", slash = true } -- dead pet
+--   { portrait = "pet", slash = true } -- dead pet, unit still available
+--   { texture = revivePetIcon, slash = true } -- dead pet, unit gone (you died and rezzed)
+--   { texture = callPetIcon } -- pet not summoned, with an attackable target
 --   { overlay = alertFrame } -- living pet. Lua can't know whether the icon is
 --   currently revealed, so a living pet always holds its cluster slot.
 function H.PetHealth.GetDisplayStatus()
 	if not alertFrame then return nil end
 
 	if alertTestUntil and GetTime() < alertTestUntil then
-		alertGate:SetValue(gateHealth)
+		setGateValue(gateHealth)
 		alertFrame:Show()
 		return { overlay = alertFrame }
 	end
@@ -398,13 +478,22 @@ function H.PetHealth.GetDisplayStatus()
 
 	if not UnitExists("pet") then
 		hideAlert()
+		if isPetRememberedDead() then
+			return { texture = revivePetIcon, slash = true }
+		end
+		if shouldWarnPetMissing() then
+			return { texture = callPetIcon }
+		end
 		return nil
 	end
+	petGoneSince = nil
 
 	if UnitIsDeadOrGhost("pet") then
+		rememberPetDead(true)
 		hideAlert()
 		return { portrait = "pet", slash = true }
 	end
+	rememberPetDead(false)
 
 	local alertHealth = H.PetHealth.GetAlertHealth()
 	if not alertHealth then
@@ -413,12 +502,161 @@ function H.PetHealth.GetDisplayStatus()
 	end
 	setGateHealth(alertHealth)
 
-	if not pcall(alertGate.SetValue, alertGate, UnitHealth("pet")) then
+	if not pcall(setGateValue, UnitHealth("pet")) then
 		hideAlert()
 		return nil
 	end
 	alertFrame:Show()
 	return { overlay = alertFrame }
+end
+
+-- ---------------------------------------------------------------------------
+-- FEED PET -- icon whenever a living pet is below fully happy. Happiness is
+-- expected as 1 (unhappy), 2 (content) or 3 (happy). The API exists on this
+-- client, but its values are unconfirmed, so a failed or secret read shows
+-- nothing (/huntard happinessdebug reports which). Separate slot from pet health.
+-- ---------------------------------------------------------------------------
+local FEED_PET_SPELL_ID = 6991
+local FEED_PET_FALLBACK_ICON = "Interface\\Icons\\Ability_Hunter_BeastTraining"
+local FULLY_HAPPY = 3
+local feedPetIcon
+
+local function readHappiness()
+	-- Forever keeps this under C_PetInfo; the old global doesn't exist here.
+	local getHappiness = (_G.C_PetInfo and _G.C_PetInfo.GetPetHappiness) or _G.GetPetHappiness
+	if not getHappiness then return nil, "API missing" end
+	local ok, happiness = pcall(getHappiness)
+	if not ok then return nil, "read failed" end
+	if _G.issecretvalue and _G.issecretvalue(happiness) then return nil, "BLOCKED (secret)" end
+	if type(happiness) ~= "number" then return nil, "returned " .. type(happiness) end
+	return happiness
+end
+
+-- You can't feed a pet in combat, so happiness isn't checked during combat or
+-- for a short time after it ends.
+local FEED_COMBAT_COOLDOWN = 10
+local lastInCombatAt
+
+function H.PetHealth.GetHappinessStatus()
+	local now = GetTime()
+	if UnitAffectingCombat("player") then
+		lastInCombatAt = now
+		return nil
+	end
+	if lastInCombatAt and now - lastInCombatAt < FEED_COMBAT_COOLDOWN then return nil end
+
+	if not UnitExists("pet") or UnitIsDeadOrGhost("pet") then return nil end
+	local happiness = readHappiness()
+	if happiness and happiness < FULLY_HAPPY then
+		return { texture = feedPetIcon or FEED_PET_FALLBACK_ICON }
+	end
+	return nil
+end
+
+-- /huntard happinessdebug -- run with your pet out, in and out of combat.
+-- Reports the happiness read, plus every other place it could be exposed.
+function H.PetHealth.DebugHappiness()
+	local lines = {}
+	local function add(s) lines[#lines + 1] = s end
+	local function safe(value)
+		if _G.issecretvalue and _G.issecretvalue(value) then return "<secret>" end
+		return tostring(value)
+	end
+
+	local happiness, problem = readHappiness()
+	add("pet out: " .. tostring(UnitExists("pet") and true or false)
+		.. "  in combat: " .. tostring(UnitAffectingCombat("player") and true or false))
+	add("C_PetInfo.GetPetHappiness: " .. (happiness and ("READABLE (" .. happiness .. " of 3)") or ("NOT READABLE: " .. problem)))
+
+	add("")
+	add("-- global names containing happi / loyal --")
+	local names = {}
+	for name in pairs(_G) do
+		if type(name) == "string" then
+			local lower = name:lower()
+			if lower:find("happi", 1, true) or lower:find("loyal", 1, true) then
+				names[#names + 1] = name
+			end
+		end
+	end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		add(name .. " (" .. type(_G[name]) .. ")")
+	end
+	if #names == 0 then add("none") end
+
+	add("")
+	add("-- C_PetInfo functions --")
+	if _G.C_PetInfo then
+		local fns = {}
+		for name in pairs(_G.C_PetInfo) do fns[#fns + 1] = tostring(name) end
+		table.sort(fns)
+		add(table.concat(fns, ", "))
+	else
+		add("C_PetInfo missing")
+	end
+
+	add("")
+	add("-- pet power types with a value --")
+	if Enum and Enum.PowerType then
+		local powerNames = {}
+		for name in pairs(Enum.PowerType) do powerNames[#powerNames + 1] = name end
+		table.sort(powerNames)
+		for _, name in ipairs(powerNames) do
+			local id = Enum.PowerType[name]
+			local okCur, cur = pcall(UnitPower, "pet", id)
+			local okMax, max = pcall(UnitPowerMax, "pet", id)
+			if okCur and okMax then
+				local maxSecret = _G.issecretvalue and _G.issecretvalue(max)
+				if maxSecret or (type(max) == "number" and max > 0) then
+					add(string.format("%s (%s): %s / %s", name, tostring(id), safe(cur), safe(max)))
+				end
+			end
+		end
+	end
+
+	add("")
+	add("-- pet frame happiness widgets --")
+	for _, frameName in ipairs({ "PetFrameHappiness", "PetFrameHappinessTexture", "PetPaperDollPetInfo" }) do
+		local widget = _G[frameName]
+		if widget then
+			local okShown, shown = pcall(widget.IsShown, widget)
+			local coords = ""
+			if widget.GetTexCoord then
+				local coordValues = { pcall(widget.GetTexCoord, widget) }
+				if coordValues[1] then
+					local parts = {}
+					for i = 2, #coordValues do parts[#parts + 1] = safe(coordValues[i]) end
+					coords = "  texcoords: " .. table.concat(parts, ", ")
+				end
+			end
+			add(frameName .. ": shown=" .. (okShown and safe(shown) or "error") .. coords)
+		else
+			add(frameName .. ": missing")
+		end
+	end
+
+	add("")
+	add("-- pet buffs --")
+	local foundBuff = false
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		for i = 1, 40 do
+			local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "pet", i, "HELPFUL")
+			if not ok then break end
+			if _G.issecretvalue and _G.issecretvalue(aura) then
+				add("buff " .. i .. ": <secret>")
+				foundBuff = true
+			elseif not aura then
+				break
+			else
+				add("buff " .. i .. ": " .. safe(aura.name) .. "  spellId=" .. safe(aura.spellId) .. "  icon=" .. safe(aura.icon))
+				foundBuff = true
+			end
+		end
+	end
+	if not foundBuff then add("none") end
+
+	H.ShowCopyableText("Huntard pet happiness search", table.concat(lines, "\n"))
 end
 
 local function initAlertDisplay()
@@ -433,6 +671,15 @@ local function initAlertDisplay()
 	alertGate:SetStatusBarColor(0, 0, 0, 0)
 	alertGate:SetMinMaxValues(gateHealth, gateHealth + 1)
 	alertGate:SetValue(gateHealth + 1)
+
+	-- Stays shown (fully transparent) so its fill keeps updating its layout.
+	alertShifter = CreateFrame("StatusBar", nil, UIParent)
+	alertShifter:SetSize(1, 1)
+	alertShifter:SetPoint("CENTER", UIParent, "CENTER")
+	alertShifter:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+	alertShifter:SetStatusBarColor(0, 0, 0, 0)
+	alertShifter:SetMinMaxValues(gateHealth, gateHealth + 1)
+	alertShifter:SetValue(gateHealth + 1)
 
 	local reveal = CreateFrame("Frame", nil, alertGate)
 	reveal:SetClipsChildren(true)
@@ -455,5 +702,18 @@ function H.PetHealth.Init()
 		_, _, icon = getSpellInfoCompat(MEND_PET_SPELL_ID)
 	end
 	mendPetIcon = icon
+
+	local _, _, reviveIcon = getSpellInfoCompat(REVIVE_PET_NAME)
+	if not reviveIcon then
+		_, _, reviveIcon = getSpellInfoCompat(REVIVE_PET_SPELL_ID)
+	end
+	revivePetIcon = reviveIcon
+
+	local _, _, callIcon = getSpellInfoCompat(CALL_PET_SPELL_ID)
+	callPetIcon = callIcon or CALL_PET_FALLBACK_ICON
+
+	local _, _, feedIcon = getSpellInfoCompat(FEED_PET_SPELL_ID)
+	feedPetIcon = feedIcon
+
 	initAlertDisplay()
 end

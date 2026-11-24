@@ -171,6 +171,41 @@ function H.Range.HasFightableTarget()
 	return UnitExists("target") and UnitCanAttack("player", "target") and not UnitIsDeadOrGhost("target")
 end
 
+-- LibRangeCheck v38 caches by UnitGUID and only guards secret GUIDs on retail
+-- Midnight, so on this client rc:GetRange() throws whenever the target's GUID
+-- is secret (seen in dungeons), which pinned the display at "8-35y"/yellow.
+-- The library is shared with other addons via LibStub, so it isn't patched.
+-- Instead, this runs the same binary search over its public hostile checker
+-- list, skipping only the GUID cache. Returns minRange, maxRange or nil.
+local function targetRangeBracket()
+	if not rc then return nil, nil end
+	local guid = UnitGUID("target")
+	if not (_G.issecretvalue and _G.issecretvalue(guid)) then
+		local ok, bracketMin, bracketMax = pcall(rc.GetRange, rc, "target")
+		if ok then return bracketMin, bracketMax end
+		return nil, nil
+	end
+
+	local list = rc.harmRC
+	if not list or #list == 0 then return nil, nil end
+	local ok, bracketMin, bracketMax = pcall(function()
+		local lo, hi = 1, #list
+		while lo <= hi do
+			local mid = math.floor((lo + hi) / 2)
+			if list[mid].checker("target", true) then
+				lo = mid + 1
+			else
+				hi = mid - 1
+			end
+		end
+		if lo > #list then return 0, list[#list].range end
+		if lo <= 1 then return list[1].range, nil end
+		return list[lo].range, list[lo - 1].range
+	end)
+	if ok then return bracketMin, bracketMax end
+	return nil, nil
+end
+
 -- Splits the ranged zone into 3 color tiers using LibRangeCheck's live
 -- bracket, normalized against Arcane Shot's own min/max -- not hardcoded
 -- checkpoint counting, since how many distinct LibRangeCheck checkpoints
@@ -178,12 +213,7 @@ end
 -- to be available.
 local function rangedTier()
 	local minR, maxR = getArcaneRange()
-	local bracketMin, bracketMax
-	if rc then
-		local ok
-		ok, bracketMin, bracketMax = pcall(rc.GetRange, rc, "target")
-		if not ok then bracketMin, bracketMax = nil, nil end
-	end
+	local bracketMin, bracketMax = targetRangeBracket()
 	-- Position within the ranged zone: prefer the live bracket's own
 	-- maxRange (how far away you could still be and still be this close),
 	-- falling back to its minRange, falling back to the middle of the
@@ -234,8 +264,8 @@ function H.Range.GetZone()
 	-- that the library's here anyway).
 	if rc then
 		local _, currentMax = getArcaneRange()
-		local ok, bracketMin = pcall(rc.GetRange, rc, "target")
-		if ok and bracketMin and bracketMin >= currentMax then
+		local bracketMin = targetRangeBracket()
+		if bracketMin and bracketMin >= currentMax then
 			return H.Range.ZONE_FAR, string.format(">%dy", currentMax)
 		end
 	end
@@ -308,8 +338,8 @@ function H.Range.Debug()
 	add("")
 
 	if rc then
-		local ok, bMin, bMax = pcall(rc.GetRange, rc, "target")
-		add(string.format("rc:GetRange('target'): ok=%s min=%s max=%s", tostring(ok), tostring(bMin), tostring(bMax)))
+		local bMin, bMax = targetRangeBracket()
+		add(string.format("target range bracket: min=%s max=%s", tostring(bMin), tostring(bMax)))
 	end
 	add("")
 
@@ -349,7 +379,8 @@ function H.Range.Debug()
 	add("")
 
 	add("-- Serpent Sting (tracked via combat log, not a live read -- see SerpentSting.lua) --")
-	add("current target GUID: " .. tostring(UnitExists("target") and UnitGUID("target")))
+	local debugGUID = UnitExists("target") and UnitGUID("target")
+	add("current target GUID: " .. ((_G.issecretvalue and _G.issecretvalue(debugGUID)) and "<secret>" or tostring(debugGUID)))
 	local okSS, ssActive, ssIcon, ssRemaining = pcall(H.SerpentSting.GetStatus)
 	add(string.format("H.SerpentSting.GetStatus(): ok=%s active=%s icon=%s remaining=%s",
 		tostring(okSS), tostring(ssActive), tostring(ssIcon), tostring(ssRemaining)))

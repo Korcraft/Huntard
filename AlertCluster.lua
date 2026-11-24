@@ -28,7 +28,9 @@ local GAP = 10 -- pixels between adjacent icons at scale 1.0
 --   { portrait = "unit", slash = true } -- that unit's own 3D portrait, optionally with a red diagonal slash over it
 --   { overlay = frame } -- holds the slot and pins the provider's own frame to it
 local PROVIDERS = {
-	function() return H.AlertIcon and H.AlertIcon.GetDisplayStatus and H.AlertIcon.GetDisplayStatus() end,
+	function() return H.AlertIcon and H.AlertIcon.GetStingStatus and H.AlertIcon.GetStingStatus() end,
+	function() return H.AlertIcon and H.AlertIcon.GetAspectStatus and H.AlertIcon.GetAspectStatus() end,
+	function() return H.PetHealth and H.PetHealth.GetHappinessStatus and H.PetHealth.GetHappinessStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetDisplayStatus and H.PetHealth.GetDisplayStatus() end,
 }
 
@@ -164,19 +166,42 @@ local function applySlot(f, status, size)
 end
 
 local function layout()
-	local active = {}
+	-- The Mend Pet overlay is kept apart and always placed rightmost.
+	local active, overlayStatus = {}, nil
 	for _, provider in ipairs(PROVIDERS) do
 		local ok, status = pcall(provider)
 		if ok and status then
-			table.insert(active, status)
+			if status.overlay then
+				overlayStatus = status
+			else
+				table.insert(active, status)
+			end
 		end
 	end
 
 	local size = ICON_SIZE * H.db.alertCluster.scale
 	local gap = GAP * H.db.alertCluster.scale
+	local step = size + gap
+	local halfStep = step / 2
+	local visibleCount = #active -- icons Lua knows are visible
+	local overlayIndex
+	if overlayStatus then
+		overlayIndex = visibleCount + 1
+		active[overlayIndex] = overlayStatus
+	end
 	local count = #active
-	local totalWidth = count * size + math.max(0, count - 1) * gap
-	local startX = -totalWidth / 2
+
+	-- A living pet always holds a slot because Lua can't tell whether its Mend
+	-- Pet icon is revealed. The other icons ride the pet shifter's fill edge:
+	-- centered as their own row while the pet is healthy, and all moved one
+	-- half-step left while Mend Pet is showing, so the full row stays centered.
+	local shifter = overlayIndex and visibleCount > 0
+		and H.PetHealth.GetLayoutShifter and H.PetHealth.GetLayoutShifter()
+	if shifter then
+		shifter:ClearAllPoints()
+		shifter:SetPoint("LEFT", anchor, "CENTER", -halfStep, 0)
+		shifter:SetSize(halfStep, 1)
+	end
 
 	local highWaterMark = math.max(count, #pool)
 	for i = 1, highWaterMark do
@@ -187,8 +212,17 @@ local function layout()
 		end
 		if i <= count then
 			f:ClearAllPoints()
-			local x = startX + (i - 1) * (size + gap) + size / 2
-			f:SetPoint("CENTER", anchor, "CENTER", x, 0)
+			if i == overlayIndex then
+				-- Its place in the full row: 0 when alone, rightmost otherwise.
+				f:SetPoint("CENTER", anchor, "CENTER", visibleCount * halfStep, 0)
+			else
+				local x = (i - (visibleCount + 1) / 2) * step
+				if shifter then
+					f:SetPoint("CENTER", shifter:GetStatusBarTexture(), "RIGHT", x, 0)
+				else
+					f:SetPoint("CENTER", anchor, "CENTER", x, 0)
+				end
+			end
 			applySlot(f, active[i], size)
 			f:Show()
 		else

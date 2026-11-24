@@ -188,9 +188,11 @@ local function printHelp()
 		.. (H.db and H.db.petHealth and H.db.petHealth.threshold or "?") .. "%, live right now: "
 		.. (H.PetHealth and H.PetHealth.GetLiveReadout and H.PetHealth.GetLiveReadout() or "?")
 		.. ") -- stand-in for a future slider")
-	print("  /huntard viperlow N   - suggest switching to Viper at or below N percent mana (currently "
+	print("  /huntard manadebug    - check whether mana is readable right now (run it mid-fight)")
+	print("  /huntard happinessdebug - check whether pet happiness is readable right now")
+	print("  /huntard viperlow N   - show the Viper Sting icon at or below N percent mana (currently "
 		.. (H.db and H.db.viperAlert and H.db.viperAlert.lowThreshold or "?") .. "%)")
-	print("  /huntard viperhigh N  - suggest switching back from Viper at or above N percent mana (currently "
+	print("  /huntard viperhigh N  - hide the Viper Sting icon at or above N percent mana (currently "
 		.. (H.db and H.db.viperAlert and H.db.viperAlert.highThreshold or "?") .. "%)")
 	print("  /huntard ammodebug    - print what's readable about your equipped quiver/ammo pouch")
 	print("  /huntard ammo 75,50,25 - set the ammo warning thresholds, comma separated (currently "
@@ -256,10 +258,14 @@ SlashCmdList.HUNTARD = function(msg)
 			.. (alertHealth and (" (" .. alertHealth .. " health on this pet).") or "."))
 	elseif msg:match("^viperlow%s+%d+$") then
 		local pct = H.ViperAlert.SetLowThreshold(tonumber(msg:match("%d+")))
-		print("|cff33ff99Huntard|r Viper suggestion will trigger at or below " .. pct .. "% mana.")
+		print("|cff33ff99Huntard|r Viper Sting icon will show at or below " .. pct .. "% mana.")
 	elseif msg:match("^viperhigh%s+%d+$") then
 		local pct = H.ViperAlert.SetHighThreshold(tonumber(msg:match("%d+")))
-		print("|cff33ff99Huntard|r Viper switch-back will trigger at or above " .. pct .. "% mana.")
+		print("|cff33ff99Huntard|r Viper Sting icon will hide at or above " .. pct .. "% mana.")
+	elseif msg == "manadebug" then
+		if H.ViperAlert then H.ViperAlert.DebugMana() end
+	elseif msg == "happinessdebug" then
+		if H.PetHealth then H.PetHealth.DebugHappiness() end
 	elseif msg == "ammodebug" then
 		if H.AmmoAlert then H.AmmoAlert.Debug() end
 	elseif msg:match("^ammo%s+[%d,%s]+$") then

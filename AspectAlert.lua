@@ -258,6 +258,41 @@ end
 -- The tracked instance -- {name=, auraInstanceID=} or nil.
 local trackedInstance = nil
 
+-- Last aspect from a confirmed cast or positive read (see CAST-TRACKING below).
+local currentAspect = nil
+
+-- Inside instances, buff reads can come back as a clean "no aspect" while one
+-- is active, so a negative read only counts in the open world, out of combat.
+-- Positive reads and casts are trusted everywhere.
+local function negativeReadsTrusted()
+	return not IsInInstance() and not UnitAffectingCombat("player")
+end
+
+-- Saved per character so a /reload inside an instance, where buffs can't be
+-- read back, doesn't forget the active aspect and raise a false NO ASPECT.
+local function characterKey()
+	local guid = UnitGUID("player")
+	if _G.issecretvalue and _G.issecretvalue(guid) then return nil end
+	return guid
+end
+
+local function rememberAspect(name)
+	local key = characterKey()
+	if not key or not H.db then return end
+	H.db.lastAspectByCharacter = H.db.lastAspectByCharacter or {}
+	H.db.lastAspectByCharacter[key] = name
+end
+
+local function restoreRememberedAspect()
+	if trackedInstance or currentAspect or not IsInInstance() then return end
+	local key = characterKey()
+	local saved = key and H.db and H.db.lastAspectByCharacter and H.db.lastAspectByCharacter[key]
+	if saved then
+		currentAspect = saved
+		trackedInstance = { name = saved, auraInstanceID = nil }
+	end
+end
+
 local function handleUnitAuraUpdate(update)
 	if not isReadable(update) or type(update) ~= "table" then return end
 
@@ -268,6 +303,10 @@ local function handleUnitAuraUpdate(update)
 		if isReadable(removed) and type(removed) == "table" then
 			for _, id in ipairs(removed) do
 				if isFiniteNumber(id) and id == trackedInstance.auraInstanceID then
+					-- Only drops the tracked instance. Do NOT clear currentAspect
+					-- or the saved aspect here: entering combat produced a false
+					-- NO ASPECT when this did, because a live aspect's instance
+					-- ID can be reported removed without the aspect ending.
 					trackedInstance = nil
 					break
 				end
@@ -308,8 +347,12 @@ local function reconcileAspect()
 	local queried, restricted = queryAspectDirect()
 	if queried then
 		trackedInstance = queried
-	elseif not restricted and not UnitAffectingCombat("player") then
+		currentAspect = queried.name -- keeps the fallback ready for combat
+		rememberAspect(queried.name)
+	elseif not restricted and negativeReadsTrusted() then
 		trackedInstance = nil
+		currentAspect = nil
+		rememberAspect(nil)
 	end
 end
 
@@ -321,8 +364,6 @@ end
 -- "Known gap" note in GetStatus() above.
 -- ---------------------------------------------------------------------------
 
-local currentAspect = nil
-
 local function syncFromLiveBuff()
 	if not (C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName) then return end
 	if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then return end
@@ -333,7 +374,7 @@ local function syncFromLiveBuff()
 			return
 		end
 	end
-	currentAspect = nil
+	if negativeReadsTrusted() then currentAspect = nil end
 end
 
 -- ---------------------------------------------------------------------------
@@ -405,16 +446,26 @@ function H.AspectAlert.Init()
 	syncFromLiveBuff() -- legacy, kept warm but no longer consulted by GetStatus()
 	refreshKnownIcons()
 	reconcileAspect()
+	restoreRememberedAspect()
 
 	local watch = CreateFrame("Frame")
 	watch:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 	watch:RegisterUnitEvent("UNIT_AURA", "player")
 	watch:RegisterEvent("PLAYER_ENTERING_WORLD")
 	watch:RegisterEvent("PLAYER_REGEN_ENABLED")
+	watch:RegisterEvent("PLAYER_DEAD")
 	watch:SetScript("OnEvent", function(_, event, arg1, arg2, spellId)
+		if event == "PLAYER_DEAD" then
+			-- Dying drops your aspect, and an instance may not report it.
+			trackedInstance = nil
+			currentAspect = nil
+			rememberAspect(nil)
+			return
+		end
 		if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED" then
 			syncFromLiveBuff()
 			reconcileAspect()
+			restoreRememberedAspect()
 			return
 		end
 		if event == "UNIT_AURA" then
@@ -440,6 +491,7 @@ function H.AspectAlert.Init()
 		if name and ASPECT_SET[name] then
 			currentAspect = name
 			trackedInstance = { name = name, auraInstanceID = nil }
+			rememberAspect(name)
 			-- Best-effort only: try a couple of extra times in the few
 			-- seconds right after the cast to grab a real auraInstanceID
 			-- (readability flickers, so more attempts right when its
@@ -490,7 +542,7 @@ function H.AspectAlert.Init()
 			self.t = 0
 			if not UnitAffectingCombat("player") then
 				local scanned, poolFound = scanLiveAspect()
-				if poolFound then
+				if poolFound and (scanned or negativeReadsTrusted()) then
 					currentAspect = scanned
 				end
 			end
