@@ -548,7 +548,15 @@ function H.PetHealth.GetHappinessStatus()
 	if not UnitExists("pet") or UnitIsDeadOrGhost("pet") then return nil end
 	local happiness = readHappiness()
 	if happiness and happiness < FULLY_HAPPY then
-		return { texture = feedPetIcon or FEED_PET_FALLBACK_ICON }
+		-- Clicking opens the food tray under the icon (see FeedTray.lua).
+		local trayOpen = H.FeedTray and H.FeedTray.IsOpen and H.FeedTray.IsOpen()
+		return {
+			texture = feedPetIcon or FEED_PET_FALLBACK_ICON,
+			feedTray = true,
+			onClick = H.FeedTray and H.FeedTray.Toggle,
+			tooltip = trayOpen and "Feed Pet\nClick to close the food tray"
+				or "Feed Pet\nClick to choose a food",
+		}
 	end
 	return nil
 end

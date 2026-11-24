@@ -22,6 +22,8 @@ local DEFAULTS = {
 	petHealth = { threshold = 50 },
 	viperAlert = { lowThreshold = 20, highThreshold = 80 },
 	ammoAlert = { thresholds = { 75, 50, 25 } },
+	ammoRestock = { enabled = true, fillPercent = 100, goldFloor = 1 },
+	ammoMemory = {}, -- [player GUID] = { arrow = itemID, bullet = itemID, lastKind = "arrow"|"bullet" }
 	aspectAlert = { preferredAspect = nil },
 	aspectAlertRequireCombat = false,
 	petAbilities = {},
@@ -132,9 +134,11 @@ eventFrame:SetScript("OnEvent", function(_, event, addonName)
 		if H.ViperAlert and H.ViperAlert.Init then H.ViperAlert.Init() end
 		if H.SerpentSting and H.SerpentSting.Init then H.SerpentSting.Init() end
 		if H.PetHealth and H.PetHealth.Init then H.PetHealth.Init() end
+		if H.FeedTray and H.FeedTray.Init then H.FeedTray.Init() end
 		if H.AlertCluster and H.AlertCluster.Init then H.AlertCluster.Init() end
 		if H.PetAbilities and H.PetAbilities.Init then H.PetAbilities.Init() end
 		if H.AmmoAlert and H.AmmoAlert.Init then H.AmmoAlert.Init() end
+		if H.AmmoRestock and H.AmmoRestock.Init then H.AmmoRestock.Init() end
 		if H.Settings and H.Settings.Init then H.Settings.Init() end
 		print("|cff33ff99Huntard|r loaded. Type |cffffffff/huntard|r for settings or |cffffffff/huntard help|r for commands.")
 	end
@@ -190,11 +194,13 @@ local function printHelp()
 		.. ") -- stand-in for a future slider")
 	print("  /huntard manadebug    - check whether mana is readable right now (run it mid-fight)")
 	print("  /huntard happinessdebug - check whether pet happiness is readable right now")
+	print("  /huntard feeddebug    - list which bag items the Feed Pet tray would offer, and why")
 	print("  /huntard viperlow N   - show the Viper Sting icon at or below N percent mana (currently "
 		.. (H.db and H.db.viperAlert and H.db.viperAlert.lowThreshold or "?") .. "%)")
 	print("  /huntard viperhigh N  - hide the Viper Sting icon at or above N percent mana (currently "
 		.. (H.db and H.db.viperAlert and H.db.viperAlert.highThreshold or "?") .. "%)")
 	print("  /huntard ammodebug    - print what's readable about your equipped quiver/ammo pouch")
+	print("  /huntard restockdebug - show what ammo restocking would do at this vendor, and why (buys nothing)")
 	print("  /huntard ammo 75,50,25 - set the ammo warning thresholds, comma separated (currently "
 		.. (H.db and H.db.ammoAlert and table.concat(H.db.ammoAlert.thresholds, ",") or "?") .. ")")
 end
@@ -266,6 +272,10 @@ SlashCmdList.HUNTARD = function(msg)
 		if H.ViperAlert then H.ViperAlert.DebugMana() end
 	elseif msg == "happinessdebug" then
 		if H.PetHealth then H.PetHealth.DebugHappiness() end
+	elseif msg == "feeddebug" then
+		if H.FeedTray then H.FeedTray.Debug() end
+	elseif msg == "restockdebug" then
+		if H.AmmoRestock then H.AmmoRestock.Debug() end
 	elseif msg == "ammodebug" then
 		if H.AmmoAlert then H.AmmoAlert.Debug() end
 	elseif msg:match("^ammo%s+[%d,%s]+$") then

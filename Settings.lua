@@ -7,7 +7,7 @@
 local H = Huntard
 H.Settings = H.Settings or {}
 
-local WIDTH, HEIGHT = 420, 590
+local WIDTH, HEIGHT = 420, 732
 local PAD = 20
 local SYNC_INTERVAL = 0.5
 
@@ -203,14 +203,26 @@ local function buildWindow()
 			function(value) setAmmoThreshold(index, value) end)
 	end
 
-	makeHeader(frame, -376, "Preferred Aspect")
-	makeAspectButtons(frame, -398)
-	makeCheckbox(frame, -478, "Aspect alert only in combat",
+	makeHeader(frame, -376, "Ammo Restock")
+	makeCheckbox(frame, -396, "Refill quiver / ammo pouch at vendors",
+		function() return H.db.ammoRestock.enabled end,
+		function(checked) H.db.ammoRestock.enabled = checked end)
+	makeSlider(frame, -426, "Keep this much of it filled", 0, 100,
+		function() return H.db.ammoRestock.fillPercent end,
+		H.AmmoRestock.SetFillPercent)
+	makeSlider(frame, -468, "Never spend below", 0, 100,
+		function() return H.db.ammoRestock.goldFloor end,
+		H.AmmoRestock.SetGoldFloor,
+		function(gold) return gold .. " gold" end)
+
+	makeHeader(frame, -518, "Preferred Aspect")
+	makeAspectButtons(frame, -540)
+	makeCheckbox(frame, -620, "Aspect alert only in combat",
 		function() return H.db.aspectAlertRequireCombat end,
 		function(checked) H.db.aspectAlertRequireCombat = checked end)
 
-	makeHeader(frame, -514, "Layout")
-	makeCheckbox(frame, -536, "Lock positions",
+	makeHeader(frame, -656, "Layout")
+	makeCheckbox(frame, -678, "Lock positions",
 		function() return H.db.locked end,
 		function(checked)
 			H.db.locked = checked
@@ -219,7 +231,7 @@ local function buildWindow()
 
 	local reset = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	reset:SetSize(130, 22)
-	reset:SetPoint("TOPRIGHT", -PAD, -537)
+	reset:SetPoint("TOPRIGHT", -PAD, -679)
 	reset:SetText("Reset Positions")
 	reset:SetScript("OnClick", H.ResetPositions)
 

@@ -85,12 +85,29 @@ local function createSlotFrame()
 	f.slash = f:CreateTexture(nil, "OVERLAY", nil, 1)
 	f.slash:SetColorTexture(0.85, 0.1, 0.1, 0.95)
 
+	-- Clicks and tooltips, only for statuses that supply onClick/tooltip.
+	f:SetScript("OnMouseUp", function(self, button)
+		if self.onClick and self:IsMouseOver() then self.onClick(button) end
+	end)
+	f:SetScript("OnEnter", function(self)
+		if not self.tooltip then return end
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(self.tooltip, 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	f:Hide()
 	return f
 end
 
 local function applySlot(f, status, size)
 	f:SetSize(size, size)
+
+	-- Only clickable while the frame is locked, so it never blocks dragging
+	-- the anchor underneath it.
+	f.onClick, f.tooltip = status.onClick, status.tooltip
+	f:EnableMouse((status.onClick ~= nil or status.tooltip ~= nil) and H.db.locked and true or false)
 
 	if status.overlay then
 		f.bg:Hide()
@@ -203,6 +220,7 @@ local function layout()
 		shifter:SetSize(halfStep, 1)
 	end
 
+	local feedSlot
 	local highWaterMark = math.max(count, #pool)
 	for i = 1, highWaterMark do
 		local f = pool[i]
@@ -225,10 +243,15 @@ local function layout()
 			end
 			applySlot(f, active[i], size)
 			f:Show()
+			if active[i].feedTray then feedSlot = f end
 		else
+			f.onClick, f.tooltip = nil, nil
+			f:EnableMouse(false)
 			f:Hide()
 		end
 	end
+
+	if H.FeedTray and H.FeedTray.SetAnchorSlot then H.FeedTray.SetAnchorSlot(feedSlot) end
 end
 
 function H.AlertCluster.Init()

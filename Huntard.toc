@@ -20,7 +20,9 @@ ViperAlert.lua
 SerpentSting.lua
 AlertIcon.lua
 PetHealth.lua
+FeedTray.lua
 AlertCluster.lua
 PetAbilities.lua
 AmmoAlert.lua
+AmmoRestock.lua
 Settings.lua
