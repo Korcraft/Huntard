@@ -153,6 +153,78 @@ local function describePetThreshold(pct)
 	return pct .. "%"
 end
 
+-- The page itself. Built twice -- into the standalone window and into the
+-- AddOns options canvas -- and every control registers a syncer, so both
+-- copies always show the current settings.
+local function buildContent(page)
+	makeHeader(page, -46, "Pet Health Alert")
+	makeSlider(page, -68, "Alert at", 10, 75,
+		function() return H.db.petHealth.threshold end,
+		H.PetHealth.SetThreshold,
+		describePetThreshold)
+
+	makeHeader(page, -114, "Viper Sting")
+	makeSlider(page, -136, "Show icon at or below", 0, 100,
+		function() return H.db.viperAlert.lowThreshold end,
+		H.ViperAlert.SetLowThreshold)
+	makeSlider(page, -178, "Hide icon at or above", 0, 100,
+		function() return H.db.viperAlert.highThreshold end,
+		H.ViperAlert.SetHighThreshold)
+
+	makeHeader(page, -224, "Ammo Warnings")
+	for index, text in ipairs({ "First warning", "Second warning", "Final warning" }) do
+		makeSlider(page, -246 - (index - 1) * 42, text, 1, 99,
+			function() return getAmmoThreshold(index) end,
+			function(value) setAmmoThreshold(index, value) end)
+	end
+
+	makeHeader(page, -376, "Ammo Restock")
+	makeCheckbox(page, -396, "Refill quiver / ammo pouch at vendors",
+		function() return H.db.ammoRestock.enabled end,
+		function(checked) H.db.ammoRestock.enabled = checked end)
+	makeSlider(page, -426, "Keep this much of it filled", 0, 100,
+		function() return H.db.ammoRestock.fillPercent end,
+		H.AmmoRestock.SetFillPercent)
+	makeSlider(page, -468, "Never spend below", 0, 100,
+		function() return H.db.ammoRestock.goldFloor end,
+		H.AmmoRestock.SetGoldFloor,
+		function(gold) return gold .. " gold" end)
+
+	makeHeader(page, -518, "Preferred Aspect")
+	makeAspectButtons(page, -540)
+	makeCheckbox(page, -620, "Aspect alert only in combat",
+		function() return H.db.aspectAlertRequireCombat end,
+		function(checked) H.db.aspectAlertRequireCombat = checked end)
+
+	makeHeader(page, -656, "Layout")
+	makeCheckbox(page, -678, "Lock positions",
+		function() return H.db.locked end,
+		function(checked)
+			H.db.locked = checked
+			H.RefreshMovables()
+		end)
+
+	local reset = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+	reset:SetSize(130, 22)
+	reset:SetPoint("TOPRIGHT", -PAD, -679)
+	reset:SetText("Reset Positions")
+	reset:SetScript("OnClick", H.ResetPositions)
+end
+
+-- Re-syncs when shown, and every SYNC_INTERVAL while shown, so the health
+-- number and lock state stay current if the pet changes or a slash command
+-- is used while the page is open.
+local function keepSynced(page)
+	page:HookScript("OnShow", syncAll)
+	page:HookScript("OnUpdate", function(self, elapsed)
+		self.sinceSync = (self.sinceSync or 0) + elapsed
+		if self.sinceSync >= SYNC_INTERVAL then
+			self.sinceSync = 0
+			syncAll()
+		end
+	end)
+end
+
 local function buildWindow()
 	frame = CreateFrame("Frame", "HuntardSettingsFrame", UIParent)
 	frame:SetSize(WIDTH, HEIGHT)
@@ -182,69 +254,8 @@ local function buildWindow()
 	close:SetText("X")
 	close:SetScript("OnClick", function() frame:Hide() end)
 
-	makeHeader(frame, -46, "Pet Health Alert")
-	makeSlider(frame, -68, "Alert at", 10, 75,
-		function() return H.db.petHealth.threshold end,
-		H.PetHealth.SetThreshold,
-		describePetThreshold)
-
-	makeHeader(frame, -114, "Viper Sting")
-	makeSlider(frame, -136, "Show icon at or below", 0, 100,
-		function() return H.db.viperAlert.lowThreshold end,
-		H.ViperAlert.SetLowThreshold)
-	makeSlider(frame, -178, "Hide icon at or above", 0, 100,
-		function() return H.db.viperAlert.highThreshold end,
-		H.ViperAlert.SetHighThreshold)
-
-	makeHeader(frame, -224, "Ammo Warnings")
-	for index, text in ipairs({ "First warning", "Second warning", "Final warning" }) do
-		makeSlider(frame, -246 - (index - 1) * 42, text, 1, 99,
-			function() return getAmmoThreshold(index) end,
-			function(value) setAmmoThreshold(index, value) end)
-	end
-
-	makeHeader(frame, -376, "Ammo Restock")
-	makeCheckbox(frame, -396, "Refill quiver / ammo pouch at vendors",
-		function() return H.db.ammoRestock.enabled end,
-		function(checked) H.db.ammoRestock.enabled = checked end)
-	makeSlider(frame, -426, "Keep this much of it filled", 0, 100,
-		function() return H.db.ammoRestock.fillPercent end,
-		H.AmmoRestock.SetFillPercent)
-	makeSlider(frame, -468, "Never spend below", 0, 100,
-		function() return H.db.ammoRestock.goldFloor end,
-		H.AmmoRestock.SetGoldFloor,
-		function(gold) return gold .. " gold" end)
-
-	makeHeader(frame, -518, "Preferred Aspect")
-	makeAspectButtons(frame, -540)
-	makeCheckbox(frame, -620, "Aspect alert only in combat",
-		function() return H.db.aspectAlertRequireCombat end,
-		function(checked) H.db.aspectAlertRequireCombat = checked end)
-
-	makeHeader(frame, -656, "Layout")
-	makeCheckbox(frame, -678, "Lock positions",
-		function() return H.db.locked end,
-		function(checked)
-			H.db.locked = checked
-			H.RefreshMovables()
-		end)
-
-	local reset = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	reset:SetSize(130, 22)
-	reset:SetPoint("TOPRIGHT", -PAD, -679)
-	reset:SetText("Reset Positions")
-	reset:SetScript("OnClick", H.ResetPositions)
-
-	frame:SetScript("OnShow", syncAll)
-	-- Keeps the health number and lock state current if the pet changes or a
-	-- slash command is used while the window is open.
-	frame:SetScript("OnUpdate", function(self, elapsed)
-		self.sinceSync = (self.sinceSync or 0) + elapsed
-		if self.sinceSync >= SYNC_INTERVAL then
-			self.sinceSync = 0
-			syncAll()
-		end
-	end)
+	buildContent(frame)
+	keepSynced(frame)
 end
 
 function H.Settings.Show()
@@ -260,32 +271,37 @@ function H.Settings.Toggle()
 	end
 end
 
--- Adds a Huntard entry to WoW's AddOns options with a button to open the window.
+-- The same page under WoW's Options > AddOns > Huntard. The page is taller
+-- than the canvas Blizzard gives it, so it sits in a scroll frame (the same
+-- UIPanelScrollFrameTemplate setup Wayfinder's settings use on this client).
+-- The standalone window (/huntard) stays the main way in: closing Blizzard's
+-- settings panel reopens the game menu, the window doesn't.
 function H.Settings.Init()
-	local panel = CreateFrame("Frame")
-	panel.name = "Huntard"
+	if not (_G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory) then
+		return
+	end
+	local canvas = CreateFrame("Frame", nil, UIParent)
+	canvas:Hide()
 
-	local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	local title = canvas:CreateFontString(nil, "OVERLAY", "GameFontHighlightHuge")
 	title:SetPoint("TOPLEFT", 16, -16)
 	title:SetText("Huntard")
 
-	local open = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-	open:SetSize(200, 26)
-	open:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
-	open:SetText("Open Huntard Settings")
-	open:SetScript("OnClick", function()
-		if _G.SettingsPanel and _G.SettingsPanel:IsShown() then
-			pcall(HideUIPanel, _G.SettingsPanel)
-		end
-		H.Settings.Show()
-	end)
+	local scroll = CreateFrame("ScrollFrame", nil, canvas, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", canvas, "TOPLEFT", 0, -20)
+	scroll:SetPoint("BOTTOMRIGHT", canvas, "BOTTOMRIGHT", -27, 0)
 
-	if _G.Settings and _G.Settings.RegisterCanvasLayoutCategory then
-		pcall(function()
-			local category = _G.Settings.RegisterCanvasLayoutCategory(panel, "Huntard")
-			_G.Settings.RegisterAddOnCategory(category)
-		end)
-	elseif _G.InterfaceOptions_AddCategory then
-		pcall(_G.InterfaceOptions_AddCategory, panel)
-	end
+	local content = CreateFrame("Frame", nil, scroll)
+	content:SetPoint("TOPLEFT")
+	content:SetSize(WIDTH, HEIGHT)
+	scroll:SetScrollChild(content)
+
+	-- buildContent lays out for the window's width; keep it at that width so
+	-- the sliders and buttons look the same in both places.
+	buildContent(content)
+	keepSynced(canvas)
+
+	pcall(function()
+		_G.Settings.RegisterAddOnCategory(_G.Settings.RegisterCanvasLayoutCategory(canvas, "Huntard"))
+	end)
 end
