@@ -127,6 +127,12 @@ eventFrame:SetScript("OnEvent", function(_, event, addonName)
 		applyDefaults(HuntardDB, DEFAULTS)
 		H.db = HuntardDB
 	elseif event == "PLAYER_LOGIN" then
+		-- Huntard does nothing at all on other classes: no frames, no events,
+		-- no settings page, no login message. /huntard just says why.
+		local _, class = UnitClass("player")
+		H.active = class == "HUNTER"
+		if not H.active then return end
+
 		if H.Range and H.Range.Init then H.Range.Init() end
 		if H.WarningText and H.WarningText.Init then H.WarningText.Init() end
 		if H.TargetFrameHighlight and H.TargetFrameHighlight.Init then H.TargetFrameHighlight.Init() end
@@ -207,6 +213,10 @@ end
 
 SLASH_HUNTARD1 = "/huntard"
 SlashCmdList.HUNTARD = function(msg)
+	if not H.active then
+		print("|cff33ff99Huntard|r only runs on hunters, so it's switched off on this character.")
+		return
+	end
 	msg = (msg or ""):trim():lower()
 
 	if msg == "" and H.Settings then
