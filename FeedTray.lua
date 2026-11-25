@@ -236,18 +236,20 @@ local function rebuild()
 	lastScale = scale
 end
 
+local anchorX, anchorY = 0, 0
+
+-- Placed relative to the alert cluster's fixed anchor using offsets Huntard
+-- computed itself. Never reads an icon's screen position: those come back
+-- secret on this client (confirmed: Lua error, 2026-11-24). Never anchored to
+-- the alert icon itself either, so that icon isn't tied to a secure frame and
+-- stays free to move during combat.
 local function position()
 	if not anchorSlot or InCombatLockdown() then return end
-	local x, bottom = anchorSlot:GetCenter(), anchorSlot:GetBottom()
-	if not x or not bottom then return end
-	local y = bottom - GAP * H.db.alertCluster.scale * 2
-	if x == lastX and y == lastY then return end
-	lastX, lastY = x, y
-	-- Placed by screen position rather than anchored to the alert slot, so
-	-- the slot never becomes tied to a secure frame and stays free to move
-	-- during combat.
+	local y = anchorY - GAP * H.db.alertCluster.scale * 2
+	if anchorX == lastX and y == lastY then return end
+	lastX, lastY = anchorX, y
 	tray:ClearAllPoints()
-	tray:SetPoint("TOP", UIParent, "BOTTOMLEFT", x, y)
+	tray:SetPoint("TOP", anchorSlot, "CENTER", anchorX, y)
 end
 
 local function close()
@@ -275,10 +277,12 @@ function FeedTray.IsOpen()
 	return isOpen
 end
 
--- Called by AlertCluster every layout pass with the slot the Feed Pet icon
--- occupies, or nil when that icon isn't showing (which closes the tray).
-function FeedTray.SetAnchorSlot(slot)
+-- Called by AlertCluster every layout pass with the cluster anchor and the
+-- Feed Pet icon's offset from its center (x, and y of the icon's bottom edge),
+-- or nil when that icon isn't showing (which closes the tray).
+function FeedTray.SetAnchorSlot(slot, x, y)
 	anchorSlot = slot
+	anchorX, anchorY = x or 0, y or 0
 	if not isOpen then return end
 	if not slot then
 		close()

@@ -105,8 +105,14 @@ local function scanPetActionBar()
 			if okTip then
 				for _, region in ipairs({ scanTooltip:GetRegions() }) do
 					if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+						-- Tooltip text can come back as a secret string (seen in
+						-- combat inside The Stockade); indexing it errors, so the
+						-- read is pcall-guarded and a secret just means no rank.
 						local text = region:GetText()
-						local rankNum = text and text:match("Rank (%d+)")
+						local okMatch, rankNum = pcall(function()
+							return text and text:match("Rank (%d+)")
+						end)
+						if not okMatch then rankNum = nil end
 						if rankNum then
 							knownRanks[name] = tonumber(rankNum)
 							break
@@ -216,7 +222,17 @@ function H.PetAbilities.Init()
 	local watch = CreateFrame("Frame")
 	watch:RegisterUnitEvent("UNIT_LEVEL", "pet")
 	watch:RegisterEvent("PLAYER_ENTERING_WORLD")
+	watch:RegisterEvent("PLAYER_REGEN_ENABLED")
+	local pendingCheck = false
 	watch:SetScript("OnEvent", function(_, event)
+		if event == "PLAYER_REGEN_ENABLED" then
+			if pendingCheck then
+				pendingCheck = false
+				if UnitExists("pet") then checkPet() end
+			end
+			return
+		end
+
 		local petLevel = UnitLevel("pet")
 		if not petLevel then return end
 
@@ -228,14 +244,21 @@ function H.PetAbilities.Init()
 			-- empty slots that hadn't synced in yet). Give it a few seconds.
 			lastCheckedLevel = petLevel
 			C_Timer.After(3, function()
-				if UnitExists("pet") then checkPet() end
+				if not UnitExists("pet") then return end
+				if InCombatLockdown() then pendingCheck = true else checkPet() end
 			end)
 			return
 		end
 
 		if petLevel ~= lastCheckedLevel then
 			lastCheckedLevel = petLevel
-			checkPet()
+			-- A level-up mid-fight waits until combat ends: tooltip text is
+			-- secret in combat, and a popup mid-pull is unwelcome anyway.
+			if InCombatLockdown() then
+				pendingCheck = true
+			else
+				checkPet()
+			end
 		end
 	end)
 end

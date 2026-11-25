@@ -86,8 +86,10 @@ local function createSlotFrame()
 	f.slash:SetColorTexture(0.85, 0.1, 0.1, 0.95)
 
 	-- Clicks and tooltips, only for statuses that supply onClick/tooltip.
+	-- No IsMouseOver() check here: it returns a secret boolean on this client
+	-- (confirmed: Lua error clicking Feed Pet, 2026-11-24), which can't be tested.
 	f:SetScript("OnMouseUp", function(self, button)
-		if self.onClick and self:IsMouseOver() then self.onClick(button) end
+		if self.onClick then self.onClick(button) end
 	end)
 	f:SetScript("OnEnter", function(self)
 		if not self.tooltip then return end
@@ -220,7 +222,12 @@ local function layout()
 		shifter:SetSize(halfStep, 1)
 	end
 
-	local feedSlot
+	-- Where the Feed Pet icon sits, as a plain offset from the anchor's center.
+	-- The tray is placed from this rather than by reading the icon's screen
+	-- position, which comes back secret here (the row can ride the pet-health
+	-- shifter). With Mend Pet showing, the row shifts half a step left and the
+	-- tray doesn't follow; close enough.
+	local feedX
 	local highWaterMark = math.max(count, #pool)
 	for i = 1, highWaterMark do
 		local f = pool[i]
@@ -235,6 +242,7 @@ local function layout()
 				f:SetPoint("CENTER", anchor, "CENTER", visibleCount * halfStep, 0)
 			else
 				local x = (i - (visibleCount + 1) / 2) * step
+				if active[i].feedTray then feedX = x end
 				if shifter then
 					f:SetPoint("CENTER", shifter:GetStatusBarTexture(), "RIGHT", x, 0)
 				else
@@ -243,7 +251,6 @@ local function layout()
 			end
 			applySlot(f, active[i], size)
 			f:Show()
-			if active[i].feedTray then feedSlot = f end
 		else
 			f.onClick, f.tooltip = nil, nil
 			f:EnableMouse(false)
@@ -251,7 +258,9 @@ local function layout()
 		end
 	end
 
-	if H.FeedTray and H.FeedTray.SetAnchorSlot then H.FeedTray.SetAnchorSlot(feedSlot) end
+	if H.FeedTray and H.FeedTray.SetAnchorSlot then
+		H.FeedTray.SetAnchorSlot(feedX and anchor or nil, feedX, -size / 2)
+	end
 end
 
 function H.AlertCluster.Init()
