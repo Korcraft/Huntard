@@ -225,12 +225,17 @@ local function keepSynced(page)
 	end)
 end
 
+-- Blizzard's standard window style (ButtonFrameTemplate: portrait, title bar,
+-- close button, inset), the same frame AutoVendor and Wayfinder use.
+local CONTENT_TOP = 36 -- buildContent starts at -46; this pulls it up inside the inset
+
 local function buildWindow()
-	frame = CreateFrame("Frame", "HuntardSettingsFrame", UIParent)
-	frame:SetSize(WIDTH, HEIGHT)
+	frame = CreateFrame("Frame", "HuntardSettingsFrame", UIParent, "ButtonFrameTemplate")
+	frame:SetSize(WIDTH + 12, HEIGHT + 30)
+	frame:SetTitle("Huntard")
+	frame:SetPortraitToAsset("Interface\\Icons\\INV_Weapon_Bow_07")
 	frame:SetPoint("CENTER")
-	frame:SetFrameStrata("DIALOG")
-	frame:SetToplevel(true)
+	frame:SetFrameStrata("HIGH")
 	frame:SetClampedToScreen(true)
 	frame:EnableMouse(true)
 	frame:SetMovable(true)
@@ -240,21 +245,11 @@ local function buildWindow()
 	frame:Hide()
 	table.insert(UISpecialFrames, "HuntardSettingsFrame") -- Esc closes it
 
-	local bg = frame:CreateTexture(nil, "BACKGROUND")
-	bg:SetAllPoints()
-	bg:SetColorTexture(0.05, 0.05, 0.05, 0.97)
+	local page = CreateFrame("Frame", nil, frame.Inset)
+	page:SetPoint("TOPLEFT", frame.Inset, "TOPLEFT", 0, CONTENT_TOP)
+	page:SetPoint("BOTTOMRIGHT", frame.Inset, "BOTTOMRIGHT")
 
-	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-	title:SetPoint("TOP", 0, -14)
-	title:SetText("Huntard Settings")
-
-	local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	close:SetSize(26, 22)
-	close:SetPoint("TOPRIGHT", -8, -8)
-	close:SetText("X")
-	close:SetScript("OnClick", function() frame:Hide() end)
-
-	buildContent(frame)
+	buildContent(page)
 	keepSynced(frame)
 end
 
