@@ -27,8 +27,10 @@ local GAP = 10 -- pixels between adjacent icons at scale 1.0
 --   { text = "...", textColor = {r,g,b} } -- plain text, no icon
 --   { portrait = "unit", slash = true } -- that unit's own 3D portrait, optionally with a red diagonal slash over it
 --   { overlay = frame } -- holds the slot and pins the provider's own frame to it
+--   { holder = frame } -- an ordinary slot that draws nothing itself; pins the provider's frame to it (Freezing Trap)
 local PROVIDERS = {
 	function() return H.AlertIcon and H.AlertIcon.GetStingStatus and H.AlertIcon.GetStingStatus() end,
+	function() return H.FreezeTimer and H.FreezeTimer.GetStatus and H.FreezeTimer.GetStatus() end,
 	function() return H.AlertIcon and H.AlertIcon.GetAspectStatus and H.AlertIcon.GetAspectStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetHappinessStatus and H.PetHealth.GetHappinessStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetDisplayStatus and H.PetHealth.GetDisplayStatus() end,
@@ -39,6 +41,7 @@ local pool = {} -- reusable slot frames, grown as needed
 
 local function applyLockState()
 	anchor:EnableMouse(not H.db.locked)
+	anchor:EnableMouseWheel(not H.db.locked) -- locked: no resizing, and the wheel zooms the camera again
 	anchor.bg:SetShown(not H.db.locked)
 end
 
@@ -111,17 +114,18 @@ local function applySlot(f, status, size)
 	f.onClick, f.tooltip = status.onClick, status.tooltip
 	f:EnableMouse((status.onClick ~= nil or status.tooltip ~= nil) and H.db.locked and true or false)
 
-	if status.overlay then
+	local pinned = status.overlay or status.holder
+	if pinned then
 		f.bg:Hide()
 		f.icon:Hide()
 		f.cooldownSwipe:Hide()
 		f.countdown:Hide()
 		f.text:Hide()
 		f.slash:Hide()
-		if status.overlay.slot ~= f then
-			status.overlay.slot = f
-			status.overlay:ClearAllPoints()
-			status.overlay:SetAllPoints(f)
+		if pinned.slot ~= f then
+			pinned.slot = f
+			pinned:ClearAllPoints()
+			pinned:SetAllPoints(f)
 		end
 		return
 	end
@@ -258,6 +262,22 @@ local function layout()
 		end
 	end
 
+	-- The Freezing Trap countdown normally has a slot of its own above (a
+	-- { holder } status). When it doesn't -- FreezeTimer couldn't tell the game
+	-- is showing it, or the freeze ran shorter than its rank says -- the game may
+	-- still draw it, so it waits in the next free spot: dead centre when no
+	-- other icon shows, else just right of them.
+	if H.FreezeTimer and H.FreezeTimer.PlaceAt then
+		local claimed = false
+		for i = 1, visibleCount do
+			if active[i].holder then claimed = true end
+		end
+		if not claimed then
+			local nextX = visibleCount == 0 and 0 or ((visibleCount - 1) / 2 + 1) * step
+			H.FreezeTimer.PlaceAt(anchor, nextX)
+		end
+	end
+
 	if H.FeedTray and H.FeedTray.SetAnchorSlot then
 		H.FeedTray.SetAnchorSlot(feedX and anchor or nil, feedX, -size / 2)
 	end
@@ -277,10 +297,11 @@ function H.AlertCluster.Init()
 		local ux, uy = UIParent:GetCenter()
 		H.db.alertCluster.x, H.db.alertCluster.y = x - ux, y - uy
 	end)
-	anchor:EnableMouseWheel(true)
+	anchor:EnableMouseWheel(not H.db.locked)
 	anchor:SetScript("OnMouseWheel", function(_, delta)
 		H.db.alertCluster.scale = math.max(0.4, math.min(3, H.db.alertCluster.scale + delta * 0.1))
 		H.AlertCluster.Refresh()
+		if H.FreezeTimer and H.FreezeTimer.Refresh then H.FreezeTimer.Refresh() end -- the trap countdown keeps the same size
 	end)
 
 	anchor.bg = anchor:CreateTexture(nil, "BACKGROUND")

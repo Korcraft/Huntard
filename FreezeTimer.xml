@@ -1,0 +1,7 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- The frame the game's aura container shows while your Freezing Trap has
+	     someone frozen (FreezeTimer.lua). The game shows and hides it. -->
+	<Frame name="HuntardFreezeTemplate" virtual="true">
+		<Size x="48" y="48"/>
+	</Frame>
+</Ui>

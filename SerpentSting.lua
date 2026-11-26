@@ -70,8 +70,17 @@ local SERPENT_STING_DURATION = 15 -- seconds -- confirmed real value, not guesse
 -- real flight time scales with distance to target -- not an exact fix, but
 -- splits the reported 0.5-1s gap.
 local TRAVEL_TIME_BUFFER = 0.75
-local ALERT_WINDOW = 3 -- seconds -- only shown once this close to falling off
-H.SerpentSting.ALERT_WINDOW = ALERT_WINDOW
+-- Seconds before it falls off that the countdown shows: the /huntard slider
+-- (1-10, default 3).
+local function alertWindow()
+	local w = H.db and H.db.serpentSting and H.db.serpentSting.window
+	return type(w) == "number" and w or 3
+end
+H.SerpentSting.GetWindow = alertWindow
+function H.SerpentSting.SetWindow(seconds)
+	H.db.serpentSting.window = math.max(1, math.min(10, math.floor(seconds + 0.5)))
+	return H.db.serpentSting.window
+end
 
 -- [targetGUID] = GetTime() when you last successfully cast Serpent Sting
 -- while that GUID was your target.
@@ -135,7 +144,7 @@ end
 
 -- Returns (active, icon, secondsRemaining). active is only true once
 -- Serpent Sting (as tracked on the CURRENT target specifically) has
--- ALERT_WINDOW seconds or less left.
+-- alertWindow() seconds or less left.
 function H.SerpentSting.GetStatus()
 	if not H.Range.HasFightableTarget() then return false end
 	local appliedTime = appliedTimeForTarget()
@@ -151,7 +160,7 @@ function H.SerpentSting.GetStatus()
 		currentTargetAppliedAt = nil
 		return false
 	end
-	if remaining <= ALERT_WINDOW then
+	if remaining <= alertWindow() then
 		return true, serpentStingIcon, remaining
 	end
 	return false

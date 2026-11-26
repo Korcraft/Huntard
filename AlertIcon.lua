@@ -29,7 +29,7 @@ function H.AlertIcon.GetStingStatus()
 
 	local ssActive, ssIcon, ssRemaining = H.SerpentSting.GetStatus()
 	if ssActive then
-		return { texture = ssIcon, countdown = ssRemaining, cooldownWindow = H.SerpentSting.ALERT_WINDOW }
+		return { texture = ssIcon, countdown = ssRemaining, cooldownWindow = H.SerpentSting.GetWindow() }
 	end
 	if viperStatus then
 		return { texture = viperIcon }

@@ -12,6 +12,7 @@ local frame, text
 
 local function applyLockState()
 	frame:EnableMouse(not H.db.locked)
+	frame:EnableMouseWheel(not H.db.locked) -- locked: no resizing, and the wheel zooms the camera again
 	frame.bg:SetShown(not H.db.locked)
 end
 
@@ -50,7 +51,7 @@ function H.WarningText.Init()
 		local ux, uy = UIParent:GetCenter()
 		H.db.warningText.x, H.db.warningText.y = x - ux, y - uy
 	end)
-	frame:EnableMouseWheel(true)
+	frame:EnableMouseWheel(not H.db.locked)
 	frame:SetScript("OnMouseWheel", function(_, delta)
 		H.db.warningText.scale = math.max(0.4, math.min(3, H.db.warningText.scale + delta * 0.1))
 		H.WarningText.Refresh()

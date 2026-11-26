@@ -7,7 +7,7 @@
 local H = Huntard
 H.Settings = H.Settings or {}
 
-local WIDTH, HEIGHT = 420, 732
+local WIDTH, HEIGHT = 420, 926
 local PAD = 20
 local SYNC_INTERVAL = 0.5
 
@@ -196,8 +196,24 @@ local function buildContent(page)
 		function() return H.db.aspectAlertRequireCombat end,
 		function(checked) H.db.aspectAlertRequireCombat = checked end)
 
-	makeHeader(page, -656, "Layout")
-	makeCheckbox(page, -678, "Lock positions",
+	local function describeSeconds(s) return s .. (s == 1 and " second" or " seconds") end
+
+	makeHeader(page, -656, "Serpent Sting")
+	makeSlider(page, -678, "Count down the last", 1, 10,
+		H.SerpentSting.GetWindow, H.SerpentSting.SetWindow, describeSeconds)
+
+	makeHeader(page, -724, "Freezing Trap")
+	makeCheckbox(page, -744, "Countdown before a freeze ends",
+		function() return H.db.freezeTimer.enabled end,
+		function(checked) H.FreezeTimer.SetEnabled(checked) end)
+	makeCheckbox(page, -772, "Hidden nameplates (sees mobs you are not targeting)",
+		function() return H.db.freezeTimer.hiddenPlates end,
+		function(checked) H.FreezeTimer.SetHiddenPlates(checked) end)
+	makeSlider(page, -802, "Count down the last", 1, 10,
+		H.FreezeTimer.GetWindow, H.FreezeTimer.SetWindow, describeSeconds)
+
+	makeHeader(page, -850, "Layout")
+	makeCheckbox(page, -872, "Lock positions",
 		function() return H.db.locked end,
 		function(checked)
 			H.db.locked = checked
@@ -206,7 +222,7 @@ local function buildContent(page)
 
 	local reset = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
 	reset:SetSize(130, 22)
-	reset:SetPoint("TOPRIGHT", -PAD, -679)
+	reset:SetPoint("TOPRIGHT", -PAD, -873)
 	reset:SetText("Reset Positions")
 	reset:SetScript("OnClick", H.ResetPositions)
 end

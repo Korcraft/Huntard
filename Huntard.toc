@@ -3,7 +3,7 @@
 ## Title: Huntard
 ## Notes: Hunter toolkit -- experimental.
 ## Author: Korcraft
-## Version: 1.0.4
+## Version: 1.1.0
 ## SavedVariables: HuntardDB
 ## X-License: MIT
 
@@ -22,7 +22,10 @@ AlertIcon.lua
 PetHealth.lua
 FeedTray.lua
 AlertCluster.lua
+FreezeTimer.xml
+FreezeTimer.lua
 PetAbilities.lua
 AmmoAlert.lua
 AmmoRestock.lua
+TrapTest.lua
 Settings.lua

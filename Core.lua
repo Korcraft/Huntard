@@ -27,6 +27,8 @@ local DEFAULTS = {
 	aspectAlert = { preferredAspect = nil },
 	aspectAlertRequireCombat = false,
 	petAbilities = {},
+	freezeTimer = { enabled = true, anySource = false, hiddenPlates = true, window = 3 },
+	serpentSting = { window = 3 },
 }
 
 local function applyDefaults(db, defaults)
@@ -142,6 +144,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addonName)
 		if H.PetHealth and H.PetHealth.Init then H.PetHealth.Init() end
 		if H.FeedTray and H.FeedTray.Init then H.FeedTray.Init() end
 		if H.AlertCluster and H.AlertCluster.Init then H.AlertCluster.Init() end
+		if H.FreezeTimer and H.FreezeTimer.Init then H.FreezeTimer.Init() end
 		if H.PetAbilities and H.PetAbilities.Init then H.PetAbilities.Init() end
 		if H.AmmoAlert and H.AmmoAlert.Init then H.AmmoAlert.Init() end
 		if H.AmmoRestock and H.AmmoRestock.Init then H.AmmoRestock.Init() end
@@ -163,6 +166,7 @@ end)
 local function refreshAllMovables()
 	if H.WarningText and H.WarningText.Refresh then H.WarningText.Refresh() end
 	if H.AlertCluster and H.AlertCluster.Refresh then H.AlertCluster.Refresh() end
+	if H.FreezeTimer and H.FreezeTimer.Refresh then H.FreezeTimer.Refresh() end
 end
 H.RefreshMovables = refreshAllMovables
 
@@ -189,6 +193,10 @@ local function printHelp()
 	print("  /huntard pethealthdebug - print whether your pet's health is currently readable or secret, and why")
 	print("  /huntard petalerttest - show the low pet health alert for 5 seconds")
 	print("  /huntard ssdebug      - print exactly what Serpent Sting tracking currently has recorded")
+	print("  /huntard freezetest   - preview the Freezing Trap 3-2-1 countdown")
+	print("  /huntard freezestatus - say whether the Freezing Trap icon is set up, and what it watches")
+	print("  /huntard freezeany    - toggle: show ANY hunter's Freezing Trap, not just yours (try this if yours never shows)")
+	print("  /huntard traptest     - record what can be seen about Freezing Trap (run again to stop and show the log)")
 	print("  /huntard bufframedebug - print exactly what's live-detected right now via Blizzard's default buff icon row")
 	print("  /huntard auradebug    - print what the UNIT_AURA instance tracker currently has, and whether a direct query is restricted right now")
 	print("  /huntard petdebug     - print what's readable about your active pet's abilities/ranks")
@@ -254,6 +262,18 @@ SlashCmdList.HUNTARD = function(msg)
 		if H.PetHealth then H.PetHealth.TestAlert() end
 	elseif msg == "ssdebug" then
 		if H.SerpentSting then H.SerpentSting.Debug() end
+	elseif msg == "freezetest" then
+		if H.FreezeTimer then H.FreezeTimer.Preview() end
+	elseif msg == "freezestatus" then
+		if H.FreezeTimer then print("|cff33ff99Huntard|r Freezing Trap icon: " .. H.FreezeTimer.StatusText()) end
+	elseif msg == "freezeany" then
+		if H.FreezeTimer then
+			local on = H.FreezeTimer.SetAnySource(not H.db.freezeTimer.anySource)
+			print("|cff33ff99Huntard|r Freezing Trap icon now shows " .. (on and "ANY hunter's trap." or "your own trap only.")
+				.. (InCombatLockdown() and " (takes effect when this fight ends)" or ""))
+		end
+	elseif msg == "traptest" then
+		if H.TrapTest then H.TrapTest.Toggle() end
 	elseif msg == "bufframedebug" then
 		if H.AspectAlert then H.AspectAlert.DebugBuffFrame() end
 	elseif msg == "auradebug" then
