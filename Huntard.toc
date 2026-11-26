@@ -3,7 +3,7 @@
 ## Title: Huntard
 ## Notes: Hunter toolkit -- experimental.
 ## Author: Korcraft
-## Version: 1.2.0
+## Version: 1.2.1
 ## SavedVariables: HuntardDB
 ## X-License: MIT
 

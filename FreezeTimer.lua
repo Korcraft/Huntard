@@ -411,6 +411,27 @@ local function setPlateClickThrough(on)
 	if set then pcall(set, on and true or false) end
 end
 
+-- The player's own nameplates come first: Huntard only hides plates for a
+-- player who has enemy nameplates OFF. If yours are on, they exist anyway and
+-- the trap countdown just uses them as they are.
+--   - At login (or when the option is ticked): yours on -> left alone;
+--     yours off -> switched on, hidden.
+--   - You switch them on while Huntard is hiding them (V, or the game's
+--     options): Huntard stops hiding them and you see them.
+--   - You switch them off: Huntard hides them again, still on.
+-- Huntard's own changes are told apart from yours by time (ownChangeAt).
+
+local ownChangeAt = -100
+local function setOwn(name, value)
+	ownChangeAt = GetTime()
+	pcall(setCVar, name, value)
+end
+
+local function cvarIsOn(name)
+	local ok, v = pcall(getCVar, name)
+	return ok and (v == "1" or v == 1 or v == true)
+end
+
 -- Switches hidden nameplates on (want = true) or puts the player's own
 -- values back. Out of combat only: the game refuses nameplate changes in a fight.
 local function applyPlates(want)
@@ -419,6 +440,8 @@ local function applyPlates(want)
 	local saved = cfg().savedPlateCVars
 	if want then
 		if not saved then
+			-- Your enemy nameplates are on: nothing to hide, use them as they are.
+			if cvarIsOn("nameplateShowEnemies") then return end
 			saved = { clickThrough = plateClickThrough() }
 			for name in pairs(PLATE_CVARS) do
 				local ok, v = pcall(getCVar, name)
@@ -427,13 +450,15 @@ local function applyPlates(want)
 			cfg().savedPlateCVars = saved
 		end
 		for name, value in pairs(PLATE_CVARS) do
-			if saved[name] ~= nil then pcall(setCVar, name, value) end
+			if saved[name] ~= nil then setOwn(name, value) end
 		end
+		ownChangeAt = GetTime()
 		setPlateClickThrough(true)
 	elseif saved then
 		for name in pairs(PLATE_CVARS) do
-			if saved[name] ~= nil then pcall(setCVar, name, saved[name]) end
+			if saved[name] ~= nil then setOwn(name, saved[name]) end
 		end
+		ownChangeAt = GetTime()
 		setPlateClickThrough(saved.clickThrough)
 		cfg().savedPlateCVars = nil
 	end
@@ -444,6 +469,24 @@ local function platesWanted() return cfg().enabled and cfg().hiddenPlates end
 function F.SetHiddenPlates(on)
 	cfg().hiddenPlates = on and true or false
 	applyPlates(platesWanted())
+end
+
+-- CVAR_UPDATE: you changed the enemy nameplate switch (not Huntard).
+local function onPlateSwitch()
+	if GetTime() - ownChangeAt < 1 or not platesWanted() then return end
+	if cfg().savedPlateCVars then
+		-- Hidden, and you touched the switch: you want to see them. Your own
+		-- look comes back, and they stay on.
+		applyPlates(false)
+		setOwn("nameplateShowEnemies", "1")
+		print("|cff33ff99Huntard|r enemy nameplates are showing now -- Huntard uses them as they are. "
+			.. "Turn them off again and Huntard goes back to keeping them hidden for the Freezing Trap countdown.")
+	elseif not cvarIsOn("nameplateShowEnemies") then
+		-- You switched yours off: hide them instead, so the trap countdown still sees every mob.
+		applyPlates(true)
+		print("|cff33ff99Huntard|r enemy nameplates off -- Huntard keeps them hidden so the Freezing Trap "
+			.. "countdown still sees every mob. Press V to show them again.")
+	end
 end
 
 function F.Refresh() if holder then applyAll() end end
@@ -509,7 +552,7 @@ function F.Init()
 	local ev = CreateFrame("Frame")
 	for _, e in ipairs({ "PLAYER_REGEN_ENABLED", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED",
 		"UNIT_TARGET", "ARENA_OPPONENT_UPDATE", "GROUP_ROSTER_UPDATE",
-		"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED" }) do
+		"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "CVAR_UPDATE" }) do
 		pcall(ev.RegisterEvent, ev, e)
 	end
 	pcall(ev.RegisterUnitEvent, ev, "UNIT_SPELLCAST_SUCCEEDED", "player")
@@ -518,6 +561,11 @@ function F.Init()
 			if pendingSetup then F.Setup() end
 			if pendingApply then pendingApply = false; applyAll() end
 			if pendingPlates ~= nil then applyPlates(pendingPlates) end
+		elseif event == "CVAR_UPDATE" then
+			if type(unit) == "string" and not (_G.issecretvalue and _G.issecretvalue(unit))
+				and unit:lower() == "nameplateshowenemies" then
+				onPlateSwitch()
+			end
 		elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
 			if isTrap(spellId) then
 				armedUntil = GetTime() + ARMED_FOR

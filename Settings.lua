@@ -206,7 +206,7 @@ local function buildContent(page)
 	makeCheckbox(page, -744, "Countdown before a freeze ends",
 		function() return H.db.freezeTimer.enabled end,
 		function(checked) H.FreezeTimer.SetEnabled(checked) end)
-	makeCheckbox(page, -772, "Hidden nameplates (sees mobs you are not targeting)",
+	makeCheckbox(page, -772, "Hidden nameplates while yours are off (sees untargeted mobs)",
 		function() return H.db.freezeTimer.hiddenPlates end,
 		function(checked) H.FreezeTimer.SetHiddenPlates(checked) end)
 	makeSlider(page, -802, "Count down the last", 1, 10,
