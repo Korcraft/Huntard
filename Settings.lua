@@ -198,7 +198,7 @@ local function buildContent(page)
 
 	local function describeSeconds(s) return s .. (s == 1 and " second" or " seconds") end
 
-	makeHeader(page, -656, "Serpent Sting")
+	makeHeader(page, -656, "Stings (Serpent, Viper, Scorpid)")
 	makeSlider(page, -678, "Count down the last", 1, 10,
 		H.SerpentSting.GetWindow, H.SerpentSting.SetWindow, describeSeconds)
 

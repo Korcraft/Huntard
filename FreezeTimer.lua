@@ -165,7 +165,12 @@ local trapDuration = 10
 local frozenSince -- GetTime() a game frame was first seen showing, nil when none is
 F.diag = { plain = 0, secret = 0 }
 
+-- Confirmed 26 Nov 2026: the answer is always secret on Forever (0 plain,
+-- 241521 secret). So after the first secret answer it stops asking for the
+-- session: the countdown just uses the next free spot (PlaceAt).
+local showingSecret = false
 local function anyShowing()
+	if showingSecret then return nil end
 	local known = false
 	for _, e in pairs(containers) do
 		local slot = e.slots.num
@@ -174,6 +179,8 @@ local function anyShowing()
 			local ok, shown = pcall(b.IsShown, b)
 			if ok and _G.issecretvalue and _G.issecretvalue(shown) then
 				F.diag.secret = F.diag.secret + 1
+				showingSecret = true
+				return nil
 			elseif ok then
 				known = true
 				if shown == true then

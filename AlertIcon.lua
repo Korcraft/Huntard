@@ -6,7 +6,7 @@
 --
 -- This file decides WHAT the two non-pet cluster slots show right now:
 --   Sting slot:
---     1. Serpent Sting about to fall off your target (SerpentSting.lua) --
+--     1. A sting (Serpent, Viper or Scorpid) about to fall off your target (SerpentSting.lua) --
 --        its icon plus a numeric countdown.
 --     2. Otherwise the Viper Sting low-mana icon (ViperAlert.lua), which
 --        returns as soon as the countdown ends if mana is still low.
