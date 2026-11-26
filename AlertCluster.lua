@@ -20,8 +20,14 @@ H.AlertCluster = H.AlertCluster or {}
 local ICON_SIZE = 48
 local GAP = 10 -- pixels between adjacent icons at scale 1.0
 
--- Ordered providers -- this is also the left-to-right order when more than
--- one is active at once. Each returns a display status table or nil:
+-- Providers. The row is in the order alerts APPEARED: a new alert takes the
+-- next slot to the right, and one that goes leaves its slot to the rest
+-- (the player's choice: "the next alert should always take the next slot,
+-- whatever order they appear in"). This list only breaks ties between alerts
+-- that appear in the same moment. After them come the countdowns the game
+-- draws (stings, then Freezing Trap), which Lua can't see showing, so they
+-- simply take the next free spots (see the end of layout). Each returns a
+-- display status table or nil:
 --   { texture = ... } -- plain icon
 --   { texture = ..., countdown = secondsRemaining, cooldownWindow = windowSeconds } -- icon + countdown + swipe
 --   { text = "...", textColor = {r,g,b} } -- plain text, no icon
@@ -30,7 +36,6 @@ local GAP = 10 -- pixels between adjacent icons at scale 1.0
 --   { holder = frame } -- an ordinary slot that draws nothing itself; pins the provider's frame to it (Freezing Trap)
 local PROVIDERS = {
 	function() return H.AlertIcon and H.AlertIcon.GetStingStatus and H.AlertIcon.GetStingStatus() end,
-	function() return H.FreezeTimer and H.FreezeTimer.GetStatus and H.FreezeTimer.GetStatus() end,
 	function() return H.AlertIcon and H.AlertIcon.GetAspectStatus and H.AlertIcon.GetAspectStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetHappinessStatus and H.PetHealth.GetHappinessStatus() end,
 	function() return H.PetHealth and H.PetHealth.GetDisplayStatus and H.PetHealth.GetDisplayStatus() end,
@@ -188,19 +193,30 @@ local function applySlot(f, status, size)
 	end
 end
 
+local order = {} -- provider indexes, in the order their alerts appeared
+
 local function layout()
 	-- The Mend Pet overlay is kept apart and always placed rightmost.
-	local active, overlayStatus = {}, nil
-	for _, provider in ipairs(PROVIDERS) do
+	local byIndex, overlayStatus = {}, nil
+	for i, provider in ipairs(PROVIDERS) do
 		local ok, status = pcall(provider)
 		if ok and status then
 			if status.overlay then
 				overlayStatus = status
 			else
-				table.insert(active, status)
+				byIndex[i] = status
 			end
 		end
 	end
+	-- Alerts that went leave the row; new ones join at the end.
+	for j = #order, 1, -1 do
+		if not byIndex[order[j]] then table.remove(order, j) end
+	end
+	for i = 1, #PROVIDERS do
+		if byIndex[i] and not tContains(order, i) then order[#order + 1] = i end
+	end
+	local active = {}
+	for _, i in ipairs(order) do active[#active + 1] = byIndex[i] end
 
 	local size = ICON_SIZE * H.db.alertCluster.scale
 	local gap = GAP * H.db.alertCluster.scale
@@ -262,20 +278,22 @@ local function layout()
 		end
 	end
 
-	-- The Freezing Trap countdown normally has a slot of its own above (a
-	-- { holder } status). When it doesn't -- FreezeTimer couldn't tell the game
-	-- is showing it, or the freeze ran shorter than its rank says -- the game may
-	-- still draw it, so it waits in the next free spot: dead centre when no
-	-- other icon shows, else just right of them.
+	-- The countdowns the game draws (StingTimer.lua, FreezeTimer.lua): Lua can't
+	-- see them showing (always secret, 26 Nov 2026), so they take the next free
+	-- spots after the icons above: dead centre when nothing else shows, else
+	-- to the right. The sting goes first; the trap moves one further over
+	-- while Huntard's own cast timing says a sting countdown is probably
+	-- showing (it can be wrong after a missed sting: then there's a gap).
+	local function freeSpot(k)
+		if visibleCount == 0 then return k * step end
+		return ((visibleCount - 1) / 2 + 1 + k) * step
+	end
+	if H.StingTimer and H.StingTimer.PlaceAt then
+		H.StingTimer.PlaceAt(anchor, freeSpot(0))
+	end
 	if H.FreezeTimer and H.FreezeTimer.PlaceAt then
-		local claimed = false
-		for i = 1, visibleCount do
-			if active[i].holder then claimed = true end
-		end
-		if not claimed then
-			local nextX = visibleCount == 0 and 0 or ((visibleCount - 1) / 2 + 1) * step
-			H.FreezeTimer.PlaceAt(anchor, nextX)
-		end
+		local okSting, stingLikely = pcall(function() return H.SerpentSting and H.SerpentSting.GetStatus() end)
+		H.FreezeTimer.PlaceAt(anchor, freeSpot((okSting and stingLikely) and 1 or 0))
 	end
 
 	if H.FeedTray and H.FeedTray.SetAnchorSlot then
@@ -302,6 +320,7 @@ function H.AlertCluster.Init()
 		H.db.alertCluster.scale = math.max(0.4, math.min(3, H.db.alertCluster.scale + delta * 0.1))
 		H.AlertCluster.Refresh()
 		if H.FreezeTimer and H.FreezeTimer.Refresh then H.FreezeTimer.Refresh() end -- the trap countdown keeps the same size
+		if H.StingTimer and H.StingTimer.Refresh then H.StingTimer.Refresh() end
 	end)
 
 	anchor.bg = anchor:CreateTexture(nil, "BACKGROUND")

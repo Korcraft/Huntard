@@ -145,6 +145,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addonName)
 		if H.FeedTray and H.FeedTray.Init then H.FeedTray.Init() end
 		if H.AlertCluster and H.AlertCluster.Init then H.AlertCluster.Init() end
 		if H.FreezeTimer and H.FreezeTimer.Init then H.FreezeTimer.Init() end
+		if H.StingTimer and H.StingTimer.Init then H.StingTimer.Init() end
 		if H.PetAbilities and H.PetAbilities.Init then H.PetAbilities.Init() end
 		if H.AmmoAlert and H.AmmoAlert.Init then H.AmmoAlert.Init() end
 		if H.AmmoRestock and H.AmmoRestock.Init then H.AmmoRestock.Init() end
@@ -167,6 +168,7 @@ local function refreshAllMovables()
 	if H.WarningText and H.WarningText.Refresh then H.WarningText.Refresh() end
 	if H.AlertCluster and H.AlertCluster.Refresh then H.AlertCluster.Refresh() end
 	if H.FreezeTimer and H.FreezeTimer.Refresh then H.FreezeTimer.Refresh() end
+	if H.StingTimer and H.StingTimer.Refresh then H.StingTimer.Refresh() end
 end
 H.RefreshMovables = refreshAllMovables
 
@@ -193,6 +195,8 @@ local function printHelp()
 	print("  /huntard pethealthdebug - print whether your pet's health is currently readable or secret, and why")
 	print("  /huntard petalerttest - show the low pet health alert for 5 seconds")
 	print("  /huntard ssdebug      - print exactly what sting tracking (Serpent, Viper, Scorpid) currently has recorded")
+	print("  /huntard stingtest    - preview the sting countdown")
+	print("  /huntard stingstatus  - say whether the sting countdown is set up")
 	print("  /huntard freezetest   - preview the Freezing Trap 3-2-1 countdown")
 	print("  /huntard freezestatus - say whether the Freezing Trap icon is set up, and what it watches")
 	print("  /huntard freezeany    - toggle: show ANY hunter's Freezing Trap, not just yours (try this if yours never shows)")
@@ -262,6 +266,10 @@ SlashCmdList.HUNTARD = function(msg)
 		if H.PetHealth then H.PetHealth.TestAlert() end
 	elseif msg == "ssdebug" then
 		if H.SerpentSting then H.SerpentSting.Debug() end
+	elseif msg == "stingtest" then
+		if H.StingTimer then H.StingTimer.Preview() end
+	elseif msg == "stingstatus" then
+		if H.StingTimer then print("|cff33ff99Huntard|r Sting countdown: " .. H.StingTimer.StatusText()) end
 	elseif msg == "freezetest" then
 		if H.FreezeTimer then H.FreezeTimer.Preview() end
 	elseif msg == "freezestatus" then

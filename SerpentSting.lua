@@ -91,6 +91,7 @@ end
 H.SerpentSting.GetWindow = alertWindow
 function H.SerpentSting.SetWindow(seconds)
 	H.db.serpentSting.window = math.max(1, math.min(10, math.floor(seconds + 0.5)))
+	if H.StingTimer and H.StingTimer.Refresh then H.StingTimer.Refresh() end
 	return H.db.serpentSting.window
 end
 

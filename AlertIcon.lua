@@ -6,9 +6,9 @@
 --
 -- This file decides WHAT the two non-pet cluster slots show right now:
 --   Sting slot:
---     1. A sting (Serpent, Viper or Scorpid) about to fall off your target (SerpentSting.lua) --
---        its icon plus a numeric countdown.
---     2. Otherwise the Viper Sting low-mana icon (ViperAlert.lua), which
+--     (The sting countdown used to be here; the game draws it now, see
+--     StingTimer.lua.)
+--     The Viper Sting low-mana icon (ViperAlert.lua), which
 --        returns as soon as the countdown ends if mana is still low.
 --   Aspect slot (AspectAlert.lua) -- one state at a time: the "NO ASPECT"
 --   icon, the travel aspect's own icon (Cheetah/Pack), or the generic
@@ -27,10 +27,7 @@ function H.AlertIcon.GetStingStatus()
 	-- Read first so the mana warning keeps updating during a countdown.
 	local viperStatus, viperIcon = H.ViperAlert.GetStatus()
 
-	local ssActive, ssIcon, ssRemaining = H.SerpentSting.GetStatus()
-	if ssActive then
-		return { texture = ssIcon, countdown = ssRemaining, cooldownWindow = H.SerpentSting.GetWindow() }
-	end
+	-- The sting countdown itself is drawn by the game now (StingTimer.lua).
 	if viperStatus then
 		return { texture = viperIcon }
 	end
